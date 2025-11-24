@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { logger, LogLevel, LogEntry, ProcessingSession } from '@/lib/logger';
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { logger, LogLevel } from "@/lib/logger";
 
 interface LogViewerProps {
   sessionId?: string;
@@ -9,43 +9,66 @@ interface LogViewerProps {
   showDebug?: boolean;
 }
 
-export default function LogViewer({ sessionId, maxEntries = 100, showDebug = false }: LogViewerProps) {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [sessions, setSessions] = useState<ProcessingSession[]>([]);
-  const [selectedSession, setSelectedSession] = useState<string | undefined>(sessionId);
-  const [filterLevel, setFilterLevel] = useState<LogLevel>(showDebug ? LogLevel.DEBUG : LogLevel.INFO);
-  const [filterCategory, setFilterCategory] = useState<string>('');
+export default function LogViewer({
+  sessionId,
+  maxEntries = 100,
+  showDebug = false,
+}: LogViewerProps) {
+  const [selectedSession, setSelectedSession] = useState<string | undefined>(
+    sessionId
+  );
+  const [filterLevel, setFilterLevel] = useState<LogLevel>(
+    showDebug ? LogLevel.DEBUG : LogLevel.INFO
+  );
+  const [filterCategory, setFilterCategory] = useState<string>("");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const refreshLogs = useCallback(() => {
-    const allLogs = logger.getLogs(selectedSession, filterCategory, filterLevel);
-    setLogs(allLogs.slice(-maxEntries));
-  }, [selectedSession, filterCategory, filterLevel, maxEntries]);
+  // Compute logs based on current filters - this is derived state
+  const logs = useMemo(() => {
+    // refreshKey triggers re-computation for auto-refresh
+    void refreshKey;
+    const allLogs = logger.getLogs(
+      selectedSession,
+      filterCategory,
+      filterLevel
+    );
+    return allLogs.slice(-maxEntries);
+  }, [selectedSession, filterCategory, filterLevel, maxEntries, refreshKey]);
 
-  const refreshSessions = useCallback(() => {
-    setSessions(logger.getAllSessions().slice(0, 10)); // Show last 10 sessions
+  // Compute sessions - this is derived state
+  const sessions = useMemo(() => {
+    // refreshKey triggers re-computation for auto-refresh
+    void refreshKey;
+    return logger.getAllSessions().slice(0, 10);
+  }, [refreshKey]);
+
+  // Auto-refresh timer - only updates the refresh key
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRefreshKey((prev) => prev + 1);
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    refreshLogs();
-    refreshSessions();
-    
-    // Auto-refresh every 5 seconds
-    const interval = setInterval(() => {
-      refreshLogs();
-      refreshSessions();
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [refreshLogs, refreshSessions]);
+  const refreshLogs = useCallback(() => {
+    setRefreshKey((prev) => prev + 1);
+  }, []);
+
+  const refreshSessions = useCallback(() => {
+    setRefreshKey((prev) => prev + 1);
+  }, []);
 
   const exportLogs = () => {
     const data = logger.exportLogs(selectedSession);
-    const blob = new Blob([data], { type: 'application/json' });
+    const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `logs-${selectedSession || 'all'}-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `logs-${selectedSession || "all"}-${
+      new Date().toISOString().split("T")[0]
+    }.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -53,7 +76,11 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
   };
 
   const clearLogs = () => {
-    if (confirm('Are you sure you want to clear the logs? This action cannot be undone.')) {
+    if (
+      confirm(
+        "Are you sure you want to clear the logs? This action cannot be undone."
+      )
+    ) {
       logger.clearLogs(selectedSession);
       refreshLogs();
       refreshSessions();
@@ -62,25 +89,32 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
 
   const getLogLevelColor = (level: LogLevel) => {
     switch (level) {
-      case LogLevel.DEBUG: return 'text-gray-500 dark:text-gray-400';
-      case LogLevel.INFO: return 'text-blue-600 dark:text-blue-400';
-      case LogLevel.WARN: return 'text-yellow-600 dark:text-yellow-400';
-      case LogLevel.ERROR: return 'text-red-600 dark:text-red-400';
-      default: return 'text-gray-600 dark:text-gray-300';
+      case LogLevel.DEBUG:
+        return "text-gray-500 dark:text-gray-400";
+      case LogLevel.INFO:
+        return "text-blue-600 dark:text-blue-400";
+      case LogLevel.WARN:
+        return "text-yellow-600 dark:text-yellow-400";
+      case LogLevel.ERROR:
+        return "text-red-600 dark:text-red-400";
+      default:
+        return "text-gray-600 dark:text-gray-300";
     }
   };
 
   const getLogLevelBadge = (level: LogLevel) => {
-    const levelNames = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    const levelNames = ["DEBUG", "INFO", "WARN", "ERROR"];
     const colors = [
-      'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
-      'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
-      'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
-      'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+      "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300",
+      "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
+      "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
+      "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
     ];
-    
+
     return (
-      <span className={`px-2 py-1 text-xs font-medium rounded-full ${colors[level]}`}>
+      <span
+        className={`px-2 py-1 text-xs font-medium rounded-full ${colors[level]}`}
+      >
         {levelNames[level]}
       </span>
     );
@@ -88,11 +122,16 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
 
   const getSessionStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'text-blue-600 dark:text-blue-400';
-      case 'completed': return 'text-green-600 dark:text-green-400';
-      case 'failed': return 'text-red-600 dark:text-red-400';
-      case 'cancelled': return 'text-gray-600 dark:text-gray-400';
-      default: return 'text-gray-600 dark:text-gray-300';
+      case "active":
+        return "text-blue-600 dark:text-blue-400";
+      case "completed":
+        return "text-green-600 dark:text-green-400";
+      case "failed":
+        return "text-red-600 dark:text-red-400";
+      case "cancelled":
+        return "text-gray-600 dark:text-gray-400";
+      default:
+        return "text-gray-600 dark:text-gray-300";
     }
   };
 
@@ -112,9 +151,7 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
         <div className="flex justify-between items-center">
           <h3 className="text-lg font-semibold">System Logs</h3>
           <div className="flex gap-2">
-            <span className="text-sm text-gray-500">
-              {logs.length} entries
-            </span>
+            <span className="text-sm text-gray-500">{logs.length} entries</span>
             <button
               onClick={() => setIsExpanded(true)}
               className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-md transition-colors"
@@ -123,17 +160,18 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
             </button>
           </div>
         </div>
-        
+
         {/* Quick status */}
         <div className="mt-2 flex gap-4 text-sm">
           <span className="text-red-600 dark:text-red-400">
-            {logs.filter(l => l.level === LogLevel.ERROR).length} errors
+            {logs.filter((l) => l.level === LogLevel.ERROR).length} errors
           </span>
           <span className="text-yellow-600 dark:text-yellow-400">
-            {logs.filter(l => l.level === LogLevel.WARN).length} warnings
+            {logs.filter((l) => l.level === LogLevel.WARN).length} warnings
           </span>
           <span className="text-blue-600 dark:text-blue-400">
-            {sessions.filter(s => s.status === 'active').length} active sessions
+            {sessions.filter((s) => s.status === "active").length} active
+            sessions
           </span>
         </div>
       </div>
@@ -173,24 +211,27 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
           <div>
             <label className="block text-sm font-medium mb-1">Session</label>
             <select
-              value={selectedSession || ''}
+              value={selectedSession || ""}
               onChange={(e) => setSelectedSession(e.target.value || undefined)}
               className="w-full px-3 py-1 text-sm border rounded-md dark:bg-gray-700 dark:border-gray-600"
             >
               <option value="">All Sessions</option>
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.mode} - {session.startTime.toLocaleString()} ({session.status})
+                  {session.mode} - {session.startTime.toLocaleString()} (
+                  {session.status})
                 </option>
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium mb-1">Level</label>
             <select
               value={filterLevel}
-              onChange={(e) => setFilterLevel(parseInt(e.target.value) as LogLevel)}
+              onChange={(e) =>
+                setFilterLevel(parseInt(e.target.value) as LogLevel)
+              }
               className="w-full px-3 py-1 text-sm border rounded-md dark:bg-gray-700 dark:border-gray-600"
             >
               <option value={LogLevel.DEBUG}>Debug+</option>
@@ -199,7 +240,7 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
               <option value={LogLevel.ERROR}>Error Only</option>
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium mb-1">Category</label>
             <select
@@ -218,7 +259,9 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Max Entries</label>
+            <label className="block text-sm font-medium mb-1">
+              Max Entries
+            </label>
             <input
               type="number"
               min="10"
@@ -237,7 +280,10 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
           <h4 className="font-medium mb-2">Recent Sessions</h4>
           <div className="space-y-2">
             {sessions.slice(0, 5).map((session) => (
-              <div key={session.id} className="flex justify-between items-center text-sm">
+              <div
+                key={session.id}
+                className="flex justify-between items-center text-sm"
+              >
                 <div>
                   <span className="font-medium">{session.mode}</span>
                   <span className="text-gray-500 ml-2">
@@ -253,7 +299,9 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
                   </span>
                   {session.endTime && (
                     <span className="text-gray-500">
-                      {formatDuration(session.endTime.getTime() - session.startTime.getTime())}
+                      {formatDuration(
+                        session.endTime.getTime() - session.startTime.getTime()
+                      )}
                     </span>
                   )}
                 </div>
@@ -270,7 +318,8 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
             🔄 Retryable Operations ({getRetryableOperations().length})
           </h4>
           <p className="text-sm text-yellow-700 dark:text-yellow-300">
-            Found failed operations that can be retried. Export logs to analyze and implement retry logic.
+            Found failed operations that can be retried. Export logs to analyze
+            and implement retry logic.
           </p>
         </div>
       )}
@@ -284,7 +333,10 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
         ) : (
           <div className="divide-y dark:divide-gray-700">
             {logs.map((log) => (
-              <div key={log.id} className="p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <div
+                key={log.id}
+                className="p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+              >
                 <div className="flex justify-between items-start mb-1">
                   <div className="flex items-center gap-2">
                     {getLogLevelBadge(log.level)}
@@ -304,11 +356,11 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
                     {log.timestamp.toLocaleTimeString()}
                   </span>
                 </div>
-                
+
                 <p className={`text-sm mb-2 ${getLogLevelColor(log.level)}`}>
                   {log.message}
                 </p>
-                
+
                 {log.data && Object.keys(log.data).length > 0 && (
                   <details className="text-xs">
                     <summary className="cursor-pointer text-gray-600 dark:text-gray-400">
@@ -319,7 +371,7 @@ export default function LogViewer({ sessionId, maxEntries = 100, showDebug = fal
                     </pre>
                   </details>
                 )}
-                
+
                 {log.error && (
                   <details className="text-xs">
                     <summary className="cursor-pointer text-red-600 dark:text-red-400">
