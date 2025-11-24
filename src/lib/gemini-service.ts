@@ -16,16 +16,16 @@ export class GeminiService {
    */
   async createBatchRequest(rug: ProcessedRug, includeImage: boolean = true): Promise<BatchRequest | null> {
     try {
-      const parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [];
+      const parts: Array<{
+        text?: string;
+        inline_data?: { mime_type: string; data: string };
+      }> = [];
 
-      // Add the text prompt - rug.prompt already contains all scene requirements
-      // Just add the instruction to generate an image using the provided rug image
+      // Add the text prompt with integrated negative concepts and clear instructions
       parts.push({
-        text: `${rug.prompt}
+        text: `${rug.prompt} Ensure seamless integration and harmonious blending of the rug within the scene so it appears naturally part of the environment, not artificially placed or pasted on. Avoid low quality, overexposed, watermarks, extra rugs, distorted perspective, cartoon style, text, logos, blurry elements, or graininess.
 
-Using the rug image provided above, generate a photorealistic interior scene image that matches these exact requirements. The generated image must show the EXACT rug from the provided image placed in the scene as described.
-
-OUTPUT: Generate the actual image, not a text description.`
+Using the rug image provided above, generate a photorealistic interior scene image that matches these exact requirements. The generated image must show the EXACT rug from the provided image placed in the scene as described.`,
       });
 
       // Add image if available and requested
@@ -34,9 +34,9 @@ OUTPUT: Generate the actual image, not a text description.`
         if (imageBase64) {
           parts.push({
             inline_data: {
-              mime_type: 'image/jpeg',
-              data: imageBase64
-            }
+              mime_type: "image/jpeg",
+              data: imageBase64,
+            },
           });
         }
       }
@@ -44,14 +44,13 @@ OUTPUT: Generate the actual image, not a text description.`
       const batchRequest: BatchRequest = {
         key: `rug-${rug.sku}`,
         request: {
-          contents: [{
-            parts: parts
-          }],
-          generation_config: {
-            temperature: 0.7,
-            max_output_tokens: 8192  // Increased to account for thinking tokens + actual output
-          }
-        }
+          contents: [
+            {
+              parts: parts,
+            },
+          ],
+          // Removed generation_config as it's not relevant for image generation
+        },
       };
 
       return batchRequest;
