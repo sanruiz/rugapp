@@ -1,130 +1,233 @@
-# Rug Prompt Generator
+# 🏠 Rug Prompt Generator
 
-A Next.js application for processing rug inventory CSV files and generating AI prompts for the Google Gemini Batch API. This tool helps automate the creation of batch requests for generating detailed rug descriptions and product content using AI.
+A Next.js application for processing large rug inventory CSV files and generating AI-styled room scene images using Google Gemini Batch API.
 
-## Features
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Next.js](https://img.shields.io/badge/Next.js-16+-black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue)
 
-- **CSV Upload & Processing**: Upload rug inventory CSV files with drag-and-drop functionality
-- **Intelligent Prompt Generation**: Automatically creates detailed prompts based on rug specifications
-- **Image Processing**: Downloads and converts rug images to base64 for AI analysis
-- **Batch Request Generation**: Creates properly formatted JSONL files for Gemini Batch API
-- **Progress Tracking**: Real-time status updates during processing
-- **Download Ready Files**: Export batch request files ready for API submission
+## ✨ Features
 
-## Prerequisites
+- **📤 CSV Upload & Processing** - Drag-and-drop support for rug inventory files
+- **🔄 Automated Pipeline** - Process 5000+ rugs automatically with parallel batch processing
+- **🖼️ Image-to-Image Generation** - Transform rug images into styled room scenes
+- **📦 Smart Chunking** - Split large CSVs into optimal chunks (75 rugs each)
+- **⏸️ Pause/Resume** - Full control over long-running batch jobs
+- **📊 Real-time Progress** - Visual tracking of all chunks and batches
+- **💰 Cost Efficient** - Uses Gemini Batch API at 50% discount
 
-- Node.js 18+ installed
-- Google Gemini API key
-- CSV file with rug product data
+## 🚀 Quick Start
 
-## Getting Started
+### 1. Clone & Install
 
-### 1. Environment Setup
-
-Copy the environment template and add your API key:
-
-```bash
-cp .env.example .env.local
-```
-
-Edit `.env.local` and add your Gemini API key:
-
-```bash
-GOOGLE_GENERATIVE_AI_API_KEY=your_actual_api_key_here
-```
-
-### 2. Install Dependencies
-
-```bash
+\`\`\`bash
+git clone <your-repo>
+cd rugapp
 npm install
-```
+\`\`\`
+
+### 2. Configure Environment
+
+\`\`\`bash
+cp .env.example .env.local
+\`\`\`
+
+Edit \`.env.local\`:
+\`\`\`env
+GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_api_key_here
+\`\`\`
+
+> Get your API key at [Google AI Studio](https://aistudio.google.com/apikey)
 
 ### 3. Run Development Server
 
-```bash
+\`\`\`bash
 npm run dev
-```
+\`\`\`
 
-Open [http://localhost:3000](http://localhost:3000) to access the application.
+Open [http://localhost:3000](http://localhost:3000)
 
-## Usage
+## 📖 Usage
 
-### 1. Upload CSV File
-- Drag and drop or click to select your rug inventory CSV file
-- The app supports various CSV column formats for rug data
+### Option 1: Automated Pipeline (Recommended for 5000+ rugs)
 
-### 2. Review Processed Rugs
-- View the first few processed rugs with generated prompts
-- Check that data was parsed correctly
+1. Click **"🚀 Automated Pipeline"** mode
+2. Upload your CSV file
+3. Click **"▶️ Start Pipeline"**
+4. Watch as the system automatically:
+   - Splits into ~75 rug chunks
+   - Processes 5 chunks in parallel
+   - Downloads images & generates JSONL
+   - Submits to Gemini Batch API
+   - Waits for results, then continues
 
-### 3. Generate Batch Requests
-- Choose between text-only or image-included batch requests
-- Text-only: Faster processing, prompts only
-- With images: Downloads and includes rug images for visual analysis
+### Option 2: Manual Processing
 
-### 4. Submit to Gemini API
-- **Option A**: Download the `batch-requests.jsonl` file and manually upload to Gemini API
-- **Option B**: Click "Submit to Gemini API" to automatically submit your batch job
-- Monitor real-time progress and status updates
-- Download results when processing completes
+1. Click **"Manual Processing"** mode
+2. Upload CSV → Generate Batch → Submit to Gemini
+3. Monitor status and download results
 
-## CSV File Format
+### Option 3: Split CSV Only
 
-Your CSV should contain columns like:
-- `SKU`: Product identifier
-- `Title`: Rug name/title
-- `Description`: Product description
-- `Primary Category`: Main rug category
-- `Material`: Rug material (wool, silk, etc.)
-- `Style`: Design style
-- `Size` / `Exact Size`: Dimensions
-- `image link` / `image_link`: URL to rug image
-- `Pile`, `Foundation`, `Origin`: Additional details
-- Color fields: `fieldColor`, `borderColor`, etc.
+1. Click **"Split CSV Only"** mode
+2. Upload large CSV
+3. Download individual chunks for external processing
 
-## API Routes
+## 📁 CSV Format
 
-- `POST /api/upload`: Process uploaded CSV files
-- `POST /api/generate-batch`: Generate batch requests with optional image processing
-- `POST /api/submit-batch`: Submit batch jobs directly to Gemini Batch API
-- `GET /api/batch-status`: Monitor batch job status and progress
-- `POST /api/batch-status`: Cancel or delete batch jobs
-- `GET /api/download-results`: Download completed batch results
+Your CSV should include these columns:
 
-## Technology Stack
+| Column | Description | Example |
+|--------|-------------|---------|
+| \`SKU\` | Product identifier | \`RUG-12345\` |
+| \`Title\` | Rug name | \`Persian Silk Carpet\` |
+| \`Primary Category\` | Main category | \`Persian\`, \`Modern\` |
+| \`Material\` | Rug material | \`Wool\`, \`Silk\` |
+| \`Size\` / \`exactSize\` | Dimensions | \`8x10\`, \`9'6" x 13'6"\` |
+| \`image link\` | URL to rug image | \`https://...\` |
+| \`fieldColor\` | Main color | \`Red\`, \`Blue\` |
+| \`borderColor\` | Border color | \`Gold\`, \`Ivory\` |
+| \`Style\` | Design style | \`Traditional\`, \`Modern\` |
 
-- **Next.js 14+**: React framework with App Router
-- **TypeScript**: Type-safe development
-- **Tailwind CSS**: Utility-first CSS framework
-- **Vercel AI SDK**: AI integration toolkit
-- **Google Gemini API**: AI model for content generation
-- **React Dropzone**: File upload component
-- **csv-parser**: CSV file processing
+See \`docs/sample-rugs.csv\` for a complete example.
 
-## Development
+## 🏗️ Architecture
 
-### Build for Production
+\`\`\`
+┌─────────────────────────────────────────────────────────┐
+│                     Frontend (React)                     │
+│  ┌─────────────┐ ┌─────────────┐ ┌──────────────────┐  │
+│  │ CSV Upload  │ │  Pipeline   │ │   Log Viewer     │  │
+│  │  Dropzone   │ │  Controls   │ │   (Real-time)    │  │
+│  └─────────────┘ └─────────────┘ └──────────────────┘  │
+└────────────────────────┬────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────┐
+│                    API Routes                            │
+│  /api/upload      /api/process-chunk    /api/batch-status│
+│  /api/chunk-csv   /api/submit-batch     /api/download-*  │
+└────────────────────────┬────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────┐
+│                  Google Gemini API                       │
+│           (Batch API - 50% cost discount)               │
+│         gemini-2.5-flash-image model                    │
+└─────────────────────────────────────────────────────────┘
+\`\`\`
 
-```bash
+## 📂 Project Structure
+
+\`\`\`
+rugapp/
+├── src/
+│   ├── app/
+│   │   ├── page.tsx              # Main page
+│   │   └── api/
+│   │       ├── upload/           # CSV upload & processing
+│   │       ├── chunk-csv/        # Split large CSVs
+│   │       ├── process-chunk/    # Process single chunk
+│   │       ├── generate-batch/   # Generate JSONL
+│   │       ├── submit-batch/     # Submit to Gemini
+│   │       ├── batch-status/     # Check batch status
+│   │       └── download-*/       # Download results
+│   ├── components/
+│   │   ├── rug-processor-app.tsx # Main app component
+│   │   ├── AutomatedPipeline.tsx # Pipeline UI
+│   │   └── LogViewer.tsx         # Real-time logs
+│   ├── lib/
+│   │   ├── csv-processor.ts      # CSV parsing
+│   │   ├── gemini-service.ts     # Gemini API client
+│   │   ├── batch-pipeline.ts     # Pipeline logic
+│   │   ├── rug-utils.ts          # Prompt generation
+│   │   └── logger.ts             # Logging system
+│   └── types/
+│       └── rug.ts                # TypeScript types
+├── docs/
+│   ├── sample-rugs.csv           # Sample data
+│   └── gemini-batch-api.md       # API documentation
+└── README.md
+\`\`\`
+
+## ⚙️ Configuration
+
+### Chunk Size Recommendations
+
+| Scenario | Chunk Size | Reason |
+|----------|------------|--------|
+| With images | 75 | ~50-75MB per batch |
+| Text only | 300-500 | Lightweight requests |
+| Testing | 10-20 | Quick iteration |
+
+### Pipeline Settings
+
+\`\`\`typescript
+// In AutomatedPipeline component
+chunkSize = 75         // Rugs per chunk
+concurrentLimit = 5    // Parallel batches
+pollingInterval = 15s  // Status check frequency
+\`\`\`
+
+## 💰 Cost Estimation
+
+Using Gemini Batch API (50% discount):
+
+| Rugs | Estimated Cost | Time |
+|------|---------------|------|
+| 100 | ~\$0.15 | ~5 min |
+| 1,000 | ~\$1.50 | ~30 min |
+| 5,500 | ~\$8.25 | ~3-4 hours |
+
+*Estimates based on ~\$0.0015 per rug with image processing*
+
+## 🛠️ API Routes
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| \`/api/upload\` | POST | Upload & parse CSV |
+| \`/api/chunk-csv\` | POST | Split CSV into chunks |
+| \`/api/process-chunk\` | POST | Process single chunk (images + JSONL + submit) |
+| \`/api/generate-batch\` | POST | Generate JSONL batch file |
+| \`/api/submit-batch\` | POST | Submit batch to Gemini |
+| \`/api/batch-status\` | GET | Check batch job status |
+| \`/api/download-results\` | GET | Download batch results |
+| \`/api/extract-images\` | POST | Extract images from results |
+
+## 🧪 Development
+
+\`\`\`bash
+# Run development server
+npm run dev
+
+# Build for production
 npm run build
-```
 
-### Run Production Server
-
-```bash
+# Run production server
 npm start
-```
 
-### Linting
-
-```bash
+# Lint code
 npm run lint
-```
+\`\`\`
 
-## Deployment
+## 🚀 Deployment
 
-Deploy easily to Vercel:
+### Vercel (Recommended)
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new)
 
-Make sure to add your `GOOGLE_GENERATIVE_AI_API_KEY` in Vercel's environment variables.
+Add environment variable:
+- \`GOOGLE_GENERATIVE_AI_API_KEY\`
+
+## �� License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+---
+
+Built with ❤️ using Next.js, TypeScript, and Google Gemini AI
