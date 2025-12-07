@@ -1,20 +1,34 @@
 import { google } from '@ai-sdk/google';
 import { BatchRequest, ProcessedRug } from '@/types/rug';
 import { downloadImageAsBase64 } from './rug-utils';
+import { logger } from "./logger";
+
+// Track statistics for batch processing
+interface BatchStats {
+  total: number;
+  withImages: number;
+  withoutImages: number;
+  imageDownloadFailed: number;
+  skipped: number;
+}
 
 export class GeminiService {
-  private model = google('gemini-2.5-flash');
+  private model = google("gemini-2.5-flash");
 
   constructor(private apiKey: string) {
     if (!apiKey) {
-      throw new Error('Gemini API key is required');
+      throw new Error("Gemini API key is required");
     }
   }
 
   /**
    * Create a batch request for a single rug
+   * Returns { request, hasImage } or null if failed
    */
-  async createBatchRequest(rug: ProcessedRug, includeImage: boolean = true): Promise<BatchRequest | null> {
+  async createBatchRequest(
+    rug: ProcessedRug,
+    includeImage: boolean = true
+  ): Promise<{ request: BatchRequest; hasImage: boolean } | null> {
     try {
       const parts: Array<{
         text?: string;
@@ -28,9 +42,18 @@ export class GeminiService {
 Using the rug image provided above, generate a photorealistic interior scene image that matches these exact requirements. The generated image must show the EXACT rug from the provided image placed in the scene as described.`,
       });
 
+      // Track if we successfully added an image
+      let hasImage = false;
+
       // Add image if available and requested
       if (includeImage && rug.imageLink) {
+        logger.debug("BATCH", `Downloading image for rug ${rug.sku}...`, {
+          sku: rug.sku,
+          imageUrl: rug.imageLink.substring(0, 60),
+        });
+
         const imageBase64 = await downloadImageAsBase64(rug.imageLink);
+
         if (imageBase64) {
           parts.push({
             inline_data: {
@@ -38,7 +61,24 @@ Using the rug image provided above, generate a photorealistic interior scene ima
               data: imageBase64,
             },
           });
+          hasImage = true;
+          logger.debug("BATCH", `✓ Image added for rug ${rug.sku}`, {
+            sku: rug.sku,
+          });
+        } else {
+          logger.warn(
+            "BATCH",
+            `✗ Failed to download image for rug ${rug.sku}`,
+            {
+              sku: rug.sku,
+              imageUrl: rug.imageLink,
+            }
+          );
         }
+      } else if (includeImage && !rug.imageLink) {
+        logger.warn("BATCH", `Rug ${rug.sku} has no image URL`, {
+          sku: rug.sku,
+        });
       }
 
       const batchRequest: BatchRequest = {
@@ -49,39 +89,116 @@ Using the rug image provided above, generate a photorealistic interior scene ima
               parts: parts,
             },
           ],
-          // Removed generation_config as it's not relevant for image generation
         },
       };
 
-      return batchRequest;
+      return { request: batchRequest, hasImage };
     } catch (error) {
-      console.error(`Error creating batch request for rug ${rug.sku}:`, error);
+      logger.error(
+        "BATCH",
+        `Error creating batch request for rug ${rug.sku}`,
+        error as Error,
+        { sku: rug.sku }
+      );
       return null;
     }
   }
 
   /**
-   * Create batch requests for multiple rugs
+   * Create batch requests for multiple rugs with detailed statistics
    */
   async createBatchRequests(
-    rugs: ProcessedRug[], 
+    rugs: ProcessedRug[],
     includeImages: boolean = true,
     onProgress?: (processed: number, total: number) => void
   ): Promise<BatchRequest[]> {
     const requests: BatchRequest[] = [];
     const total = rugs.length;
 
+    // Initialize stats
+    const stats: BatchStats = {
+      total,
+      withImages: 0,
+      withoutImages: 0,
+      imageDownloadFailed: 0,
+      skipped: 0,
+    };
+
+    logger.info("BATCH", `Starting batch request creation for ${total} rugs`, {
+      total,
+      includeImages,
+    });
+
     for (let i = 0; i < rugs.length; i++) {
       const rug = rugs[i];
-      const request = await this.createBatchRequest(rug, includeImages);
-      
-      if (request) {
-        requests.push(request);
+      const result = await this.createBatchRequest(rug, includeImages);
+
+      if (result) {
+        requests.push(result.request);
+
+        if (includeImages) {
+          if (result.hasImage) {
+            stats.withImages++;
+          } else if (rug.imageLink) {
+            stats.imageDownloadFailed++;
+          } else {
+            stats.withoutImages++;
+          }
+        }
+      } else {
+        stats.skipped++;
+        logger.warn(
+          "BATCH",
+          `Skipped rug ${rug.sku} - failed to create request`,
+          { sku: rug.sku }
+        );
       }
 
       if (onProgress) {
         onProgress(i + 1, total);
       }
+
+      // Log progress every 25 rugs
+      if ((i + 1) % 25 === 0 || i === total - 1) {
+        logger.info("BATCH", `Progress: ${i + 1}/${total} rugs processed`, {
+          processed: i + 1,
+          total,
+          withImages: stats.withImages,
+          failed: stats.imageDownloadFailed,
+        });
+      }
+    }
+
+    // Final summary
+    logger.info("BATCH", `Batch creation complete`, {
+      totalRugs: stats.total,
+      requestsCreated: requests.length,
+      withImages: stats.withImages,
+      withoutImages: stats.withoutImages,
+      imageDownloadFailed: stats.imageDownloadFailed,
+      skipped: stats.skipped,
+      successRate: `${Math.round((requests.length / stats.total) * 100)}%`,
+      imageSuccessRate: includeImages
+        ? `${Math.round(
+            (stats.withImages /
+              (stats.withImages + stats.imageDownloadFailed || 1)) *
+              100
+          )}%`
+        : "N/A",
+    });
+
+    // Warn if many images failed
+    if (stats.imageDownloadFailed > 0) {
+      logger.warn(
+        "BATCH",
+        `⚠️ ${stats.imageDownloadFailed} images failed to download`,
+        {
+          failed: stats.imageDownloadFailed,
+          percentage: `${Math.round(
+            (stats.imageDownloadFailed / total) * 100
+          )}%`,
+        }
+      );
     }
 
     return requests;
@@ -92,29 +209,29 @@ Using the rug image provided above, generate a photorealistic interior scene ima
    */
   generateJSONL(batchRequests: BatchRequest[]): string {
     return batchRequests
-      .map(request => {
+      .map((request) => {
         try {
           return JSON.stringify(request);
         } catch (error) {
-          console.error('Error stringifying request:', error, request);
+          console.error("Error stringifying request:", error, request);
           return null;
         }
       })
       .filter(Boolean)
-      .join('\n');
+      .join("\n");
   }
 
   /**
    * Escape text for safe JSON usage
    */
   private escapeJsonText(text: string): string {
-    if (!text) return '';
+    if (!text) return "";
     return text
-      .replace(/\\/g, '\\\\')
+      .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
-      .replace(/\n/g, '\\n')
-      .replace(/\r/g, '\\r')
-      .replace(/\t/g, '\\t');
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t");
   }
 
   /**
@@ -124,7 +241,7 @@ Using the rug image provided above, generate a photorealistic interior scene ima
     try {
       // For direct API calls, we'd use the Vercel AI SDK's generate function
       // This is a simplified version - you might want to use the actual AI SDK methods
-      
+
       return `Generated description for ${rug.title} (${rug.sku}): ${rug.prompt}`;
     } catch (error) {
       console.error(`Error processing rug ${rug.sku}:`, error);

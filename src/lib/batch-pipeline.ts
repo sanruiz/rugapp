@@ -4,13 +4,25 @@ import { logger } from './logger';
 export interface PipelineChunk {
   index: number;
   rugs: ProcessedRug[];
-  status: 'pending' | 'downloading_images' | 'generating_jsonl' | 'submitted' | 'processing' | 'completed' | 'failed';
+  status:
+    | "pending"
+    | "downloading_images"
+    | "generating_jsonl"
+    | "submitted"
+    | "processing"
+    | "downloading_results"
+    | "completed"
+    | "failed";
   batchId?: string;
   batchJob?: BatchJob;
   jsonlContent?: string;
   error?: string;
   startTime?: Date;
   endTime?: Date;
+  // Results tracking
+  resultsDownloaded?: boolean;
+  imagesExtracted?: number;
+  downloadError?: string;
 }
 
 export interface PipelineState {

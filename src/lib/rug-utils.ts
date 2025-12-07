@@ -1,4 +1,5 @@
 import { RugData } from '@/types/rug';
+import { logger } from "./logger";
 
 // ========= CONFIG =========
 export const NEGATIVE_PROMPT = "low quality, overexposed, watermark, extra rugs, distorted perspective, cartoon, text, logo";
@@ -120,18 +121,105 @@ export function hashToSeed(str: string): number {
 }
 
 export async function downloadImageAsBase64(imageUrl: string): Promise<string | null> {
+  if (!imageUrl) {
+    logger.warn("IMAGE", "No image URL provided", { imageUrl });
+    return null;
+  }
+
   try {
-    const response = await fetch(imageUrl);
+    logger.debug("IMAGE", `Downloading image...`, {
+      url: imageUrl.substring(0, 80),
+    });
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+    const response = await fetch(imageUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; RugApp/1.0)",
+      },
+    });
+
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      logger.error(
+        "IMAGE",
+        `Failed to download image: HTTP ${response.status}`,
+        undefined,
+        {
+          url: imageUrl,
+          status: String(response.status),
+          statusText: response.statusText,
+        }
+      );
+      return null;
     }
-    
+
+    const contentType = response.headers.get("content-type");
+    if (!contentType?.startsWith("image/")) {
+      logger.warn("IMAGE", `Invalid content type: ${contentType}`, {
+        url: imageUrl,
+        contentType,
+      });
+    }
+
     const buffer = await response.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString('base64');
+
+    if (buffer.byteLength === 0) {
+      logger.error("IMAGE", "Downloaded image is empty (0 bytes)", undefined, {
+        url: imageUrl,
+      });
+      return null;
+    }
+
+    if (buffer.byteLength < 100) {
+      logger.warn(
+        "IMAGE",
+        `Image suspiciously small: ${buffer.byteLength} bytes`,
+        { url: imageUrl }
+      );
+    }
+
+    const base64 = Buffer.from(buffer).toString("base64");
+
+    // Validate base64 is valid
+    if (!base64 || base64.length < 100) {
+      logger.error(
+        "IMAGE",
+        "Base64 conversion failed or too small",
+        undefined,
+        {
+          url: imageUrl,
+          base64Length: base64?.length || 0,
+        }
+      );
+      return null;
+    }
+
+    logger.debug("IMAGE", `Image downloaded successfully`, {
+      url: imageUrl.substring(0, 50),
+      sizeKB: Math.round(buffer.byteLength / 1024),
+      base64Length: base64.length,
+    });
     
     return base64;
   } catch (error) {
-    console.error('Error downloading image:', error);
+    if ((error as Error).name === "AbortError") {
+      logger.error("IMAGE", "Image download timed out (30s)", undefined, {
+        url: imageUrl,
+      });
+    } else {
+      logger.error(
+        "IMAGE",
+        `Error downloading image: ${(error as Error).message}`,
+        error as Error,
+        {
+          url: imageUrl,
+        }
+      );
+    }
     return null;
   }
 }

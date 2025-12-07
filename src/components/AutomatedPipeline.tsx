@@ -30,6 +30,9 @@ export default function AutomatedPipeline({
   const [progress, setProgress] = useState<PipelineProgress | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [downloadedResults, setDownloadedResults] = useState<
+    Map<number, { content: string; images: unknown[] }>
+  >(new Map());
   const pollingIntervalsRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -49,74 +52,210 @@ export default function AutomatedPipeline({
     }
   }, [pipeline]);
 
-  // Poll for batch status
-  const startPollingForChunk = useCallback((chunkIndex: number, batchId: string) => {
-    const pollInterval = setInterval(async () => {
+  // Download results for a completed chunk
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const downloadChunkResults = useCallback(
+    async (chunkIndex: number, outputFile: string, _batchId: string) => {
       try {
-        const response = await fetch(`/api/batch-status?batchId=${encodeURIComponent(batchId)}`);
-        const result = await response.json();
+        logger.info(
+          "PIPELINE",
+          `Downloading results for chunk ${chunkIndex + 1}...`,
+          { chunkIndex, outputFile }
+        );
 
-        if (result.success && result.data) {
-          const state = result.data.state;
+        // Download the batch results
+        const downloadResponse = await fetch(
+          `/api/download-results?fileName=${encodeURIComponent(outputFile)}`
+        );
+        const downloadResult = await downloadResponse.json();
 
-          setPipeline(prev => {
-            if (!prev) return prev;
-            const newChunks = [...prev.chunks];
-            newChunks[chunkIndex] = {
-              ...newChunks[chunkIndex],
-              batchJob: result.data
-            };
-
-            if (state === 'JOB_STATE_SUCCEEDED') {
-              clearInterval(pollInterval);
-              pollingIntervalsRef.current.delete(chunkIndex);
-              
-              newChunks[chunkIndex] = {
-                ...newChunks[chunkIndex],
-                status: 'completed',
-                endTime: new Date()
-              };
-
-              logger.info('PIPELINE', `Chunk ${chunkIndex + 1} completed!`, { chunkIndex, batchId });
-
-              return {
-                ...prev,
-                chunks: newChunks,
-                currentlyProcessing: prev.currentlyProcessing.filter(i => i !== chunkIndex),
-                completedCount: prev.completedCount + 1
-              };
-
-            } else if (state === 'JOB_STATE_FAILED' || state === 'JOB_STATE_CANCELLED') {
-              clearInterval(pollInterval);
-              pollingIntervalsRef.current.delete(chunkIndex);
-
-              newChunks[chunkIndex] = {
-                ...newChunks[chunkIndex],
-                status: 'failed',
-                error: `Batch ${state.replace('JOB_STATE_', '').toLowerCase()}`,
-                endTime: new Date()
-              };
-
-              logger.error('PIPELINE', `Chunk ${chunkIndex + 1} batch failed`, undefined, { chunkIndex, batchId, state });
-
-              return {
-                ...prev,
-                chunks: newChunks,
-                currentlyProcessing: prev.currentlyProcessing.filter(i => i !== chunkIndex),
-                failedCount: prev.failedCount + 1
-              };
-            }
-
-            return { ...prev, chunks: newChunks };
-          });
+        if (!downloadResult.success) {
+          throw new Error(downloadResult.error || "Failed to download results");
         }
-      } catch (error) {
-        console.error(`Error polling batch ${batchId}:`, error);
-      }
-    }, 15000);
 
-    pollingIntervalsRef.current.set(chunkIndex, pollInterval);
-  }, []);
+        // Extract images from results
+        const extractResponse = await fetch("/api/extract-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ batchResults: downloadResult.data.content }),
+        });
+
+        const extractResult = await extractResponse.json();
+        const images = extractResult.success ? extractResult.data : [];
+
+        // Save to downloaded results
+        setDownloadedResults((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(chunkIndex, {
+            content: downloadResult.data.content,
+            images,
+          });
+          return newMap;
+        });
+
+        // Auto-save results file
+        const blob = new Blob([downloadResult.data.content], {
+          type: "application/jsonl",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `batch-results-chunk-${chunkIndex + 1}.jsonl`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        logger.info("PIPELINE", `Chunk ${chunkIndex + 1} results downloaded!`, {
+          chunkIndex,
+          resultCount: downloadResult.data.resultCount,
+          imagesExtracted: images.length,
+        });
+
+        // Update chunk status to completed
+        setPipeline((prev) => {
+          if (!prev) return prev;
+          const newChunks = [...prev.chunks];
+          newChunks[chunkIndex] = {
+            ...newChunks[chunkIndex],
+            status: "completed",
+            endTime: new Date(),
+            resultsDownloaded: true,
+            imagesExtracted: images.length,
+          };
+          return { ...prev, chunks: newChunks };
+        });
+      } catch (error) {
+        logger.error(
+          "PIPELINE",
+          `Failed to download results for chunk ${chunkIndex + 1}`,
+          error as Error,
+          { chunkIndex }
+        );
+
+        // Mark as completed but with download error
+        setPipeline((prev) => {
+          if (!prev) return prev;
+          const newChunks = [...prev.chunks];
+          newChunks[chunkIndex] = {
+            ...newChunks[chunkIndex],
+            status: "completed",
+            endTime: new Date(),
+            resultsDownloaded: false,
+            downloadError: (error as Error).message,
+          };
+          return { ...prev, chunks: newChunks };
+        });
+      }
+    },
+    []
+  );
+
+  // Poll for batch status
+  const startPollingForChunk = useCallback(
+    (chunkIndex: number, batchId: string) => {
+      const pollInterval = setInterval(async () => {
+        try {
+          const response = await fetch(
+            `/api/batch-status?batchId=${encodeURIComponent(batchId)}`
+          );
+          const result = await response.json();
+
+          if (result.success && result.data) {
+            const state = result.data.state;
+
+            setPipeline((prev) => {
+              if (!prev) return prev;
+              const newChunks = [...prev.chunks];
+              newChunks[chunkIndex] = {
+                ...newChunks[chunkIndex],
+                batchJob: result.data,
+              };
+
+              if (state === "JOB_STATE_SUCCEEDED") {
+                clearInterval(pollInterval);
+                pollingIntervalsRef.current.delete(chunkIndex);
+
+                // Mark as downloading results
+                newChunks[chunkIndex] = {
+                  ...newChunks[chunkIndex],
+                  status: "downloading_results" as PipelineChunk["status"],
+                };
+
+                logger.info(
+                  "PIPELINE",
+                  `Chunk ${
+                    chunkIndex + 1
+                  } batch completed, downloading results...`,
+                  { chunkIndex, batchId }
+                );
+
+                // Download results in background
+                const outputFile = result.data.outputFile;
+                if (outputFile) {
+                  downloadChunkResults(chunkIndex, outputFile, batchId);
+                } else {
+                  // No output file, mark as completed anyway
+                  newChunks[chunkIndex] = {
+                    ...newChunks[chunkIndex],
+                    status: "completed",
+                    endTime: new Date(),
+                  };
+                }
+
+                return {
+                  ...prev,
+                  chunks: newChunks,
+                  currentlyProcessing: prev.currentlyProcessing.filter(
+                    (i) => i !== chunkIndex
+                  ),
+                  completedCount: prev.completedCount + 1,
+                };
+              } else if (
+                state === "JOB_STATE_FAILED" ||
+                state === "JOB_STATE_CANCELLED"
+              ) {
+                clearInterval(pollInterval);
+                pollingIntervalsRef.current.delete(chunkIndex);
+
+                newChunks[chunkIndex] = {
+                  ...newChunks[chunkIndex],
+                  status: "failed",
+                  error: `Batch ${state
+                    .replace("JOB_STATE_", "")
+                    .toLowerCase()}`,
+                  endTime: new Date(),
+                };
+
+                logger.error(
+                  "PIPELINE",
+                  `Chunk ${chunkIndex + 1} batch failed`,
+                  undefined,
+                  { chunkIndex, batchId, state }
+                );
+
+                return {
+                  ...prev,
+                  chunks: newChunks,
+                  currentlyProcessing: prev.currentlyProcessing.filter(
+                    (i) => i !== chunkIndex
+                  ),
+                  failedCount: prev.failedCount + 1,
+                };
+              }
+
+              return { ...prev, chunks: newChunks };
+            });
+          }
+        } catch (error) {
+          console.error(`Error polling batch ${batchId}:`, error);
+        }
+      }, 15000);
+
+      pollingIntervalsRef.current.set(chunkIndex, pollInterval);
+    },
+    [downloadChunkResults]
+  );
 
   // Process a single chunk
   const processChunk = useCallback(async (chunkIndex: number, chunkRugs: ProcessedRug[]) => {
@@ -290,31 +429,58 @@ export default function AutomatedPipeline({
     );
   }
 
-  const getStatusColor = (status: PipelineChunk['status']) => {
+  const getStatusColor = (status: PipelineChunk["status"]) => {
     switch (status) {
-      case 'pending': return 'bg-gray-200 dark:bg-gray-700';
-      case 'downloading_images': return 'bg-yellow-200 dark:bg-yellow-800 animate-pulse';
-      case 'generating_jsonl': return 'bg-blue-200 dark:bg-blue-800 animate-pulse';
-      case 'submitted': return 'bg-indigo-200 dark:bg-indigo-800';
-      case 'processing': return 'bg-purple-200 dark:bg-purple-800 animate-pulse';
-      case 'completed': return 'bg-green-200 dark:bg-green-800';
-      case 'failed': return 'bg-red-200 dark:bg-red-800';
-      default: return 'bg-gray-200';
+      case "pending":
+        return "bg-gray-200 dark:bg-gray-700";
+      case "downloading_images":
+        return "bg-yellow-200 dark:bg-yellow-800 animate-pulse";
+      case "generating_jsonl":
+        return "bg-blue-200 dark:bg-blue-800 animate-pulse";
+      case "submitted":
+        return "bg-indigo-200 dark:bg-indigo-800";
+      case "processing":
+        return "bg-purple-200 dark:bg-purple-800 animate-pulse";
+      case "downloading_results":
+        return "bg-cyan-200 dark:bg-cyan-800 animate-pulse";
+      case "completed":
+        return "bg-green-200 dark:bg-green-800";
+      case "failed":
+        return "bg-red-200 dark:bg-red-800";
+      default:
+        return "bg-gray-200";
     }
   };
 
-  const getStatusIcon = (status: PipelineChunk['status']) => {
+  const getStatusIcon = (status: PipelineChunk["status"]) => {
     switch (status) {
-      case 'pending': return '⏳';
-      case 'downloading_images': return '📥';
-      case 'generating_jsonl': return '📝';
-      case 'submitted': return '📤';
-      case 'processing': return '⚙️';
-      case 'completed': return '✅';
-      case 'failed': return '❌';
-      default: return '❓';
+      case "pending":
+        return "⏳";
+      case "downloading_images":
+        return "📥";
+      case "generating_jsonl":
+        return "📝";
+      case "submitted":
+        return "📤";
+      case "processing":
+        return "⚙️";
+      case "downloading_results":
+        return "💾";
+      case "completed":
+        return "✅";
+      case "failed":
+        return "❌";
+      default:
+        return "❓";
     }
   };
+
+  // Calculate totals for downloaded results
+  const totalImagesExtracted =
+    pipeline?.chunks.reduce(
+      (sum, chunk) => sum + (chunk.imagesExtracted || 0),
+      0
+    ) || 0;
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 space-y-6">
@@ -360,19 +526,19 @@ export default function AutomatedPipeline({
         <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
           <span>{progress.currentStatus}</span>
           <span>
-            {progress.completedChunks}/{progress.totalChunks} chunks 
-            ({progress.overallProgress}%)
+            {progress.completedChunks}/{progress.totalChunks} chunks (
+            {progress.overallProgress}%)
           </span>
         </div>
-        
+
         <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-4 overflow-hidden">
-          <div 
+          <div
             className="h-full bg-blue-500 transition-all duration-500"
             style={{ width: `${progress.overallProgress}%` }}
           />
         </div>
 
-        <div className="grid grid-cols-4 gap-4 text-center">
+        <div className="grid grid-cols-5 gap-4 text-center">
           <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
             <div className="text-2xl font-bold text-gray-800 dark:text-white">
               {progress.pendingChunks}
@@ -397,11 +563,18 @@ export default function AutomatedPipeline({
             </div>
             <div className="text-xs text-gray-500">Failed</div>
           </div>
+          <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg p-3">
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+              {totalImagesExtracted}
+            </div>
+            <div className="text-xs text-gray-500">🖼️ Images</div>
+          </div>
         </div>
 
         {progress.estimatedTimeRemaining && isRunning && (
           <div className="text-center text-sm text-gray-500">
-            Estimated time remaining: {formatTimeRemaining(progress.estimatedTimeRemaining)}
+            Estimated time remaining:{" "}
+            {formatTimeRemaining(progress.estimatedTimeRemaining)}
           </div>
         )}
       </div>
@@ -412,25 +585,41 @@ export default function AutomatedPipeline({
           {pipeline.chunks.map((chunk, index) => (
             <div
               key={index}
-              className={`w-6 h-6 rounded flex items-center justify-center text-xs cursor-default ${getStatusColor(chunk.status)}`}
-              title={`Chunk ${index + 1}: ${chunk.status}${chunk.batchId ? ` (${chunk.batchId.slice(-8)})` : ''}${chunk.error ? ` - ${chunk.error}` : ''}`}
+              className={`w-6 h-6 rounded flex items-center justify-center text-xs cursor-default ${getStatusColor(
+                chunk.status
+              )}`}
+              title={`Chunk ${index + 1}: ${chunk.status}${
+                chunk.batchId ? ` (${chunk.batchId.slice(-8)})` : ""
+              }${
+                chunk.imagesExtracted
+                  ? ` - ${chunk.imagesExtracted} images`
+                  : ""
+              }${chunk.error ? ` - ${chunk.error}` : ""}${
+                chunk.downloadError
+                  ? ` (download failed: ${chunk.downloadError})`
+                  : ""
+              }`}
             >
               {getStatusIcon(chunk.status)}
             </div>
           ))}
         </div>
-        
+
         <div className="mt-4 flex flex-wrap gap-3 text-xs">
           <span>⏳ Pending</span>
-          <span>📥 Downloading</span>
+          <span>📥 Downloading Images</span>
           <span>⚙️ Processing</span>
+          <span>💾 Downloading Results</span>
           <span>✅ Completed</span>
           <span>❌ Failed</span>
         </div>
       </div>
 
       <div className="text-sm text-gray-500 border-t pt-4">
-        <p>📊 Total: {pipeline.totalRugs} rugs | 📦 Chunk size: {pipeline.chunkSize} | 🔄 Concurrent: {pipeline.concurrentLimit}</p>
+        <p>
+          📊 Total: {pipeline.totalRugs} rugs | 📦 Chunk size:{" "}
+          {pipeline.chunkSize} | 🔄 Concurrent: {pipeline.concurrentLimit}
+        </p>
       </div>
     </div>
   );
