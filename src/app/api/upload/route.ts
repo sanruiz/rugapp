@@ -34,9 +34,10 @@ export async function POST(request: NextRequest) {
       message: `Successfully processed ${processedRugs.length} rugs`,
       data: {
         totalRugs: processedRugs.length,
-        rugs: processedRugs.slice(0, 5), // Return first 5 for preview
-        hasMore: processedRugs.length > 5
-      }
+        rugs: processedRugs, // Return ALL rugs for batch processing
+        preview: processedRugs.slice(0, 5), // First 5 for UI preview
+        hasMore: processedRugs.length > 5,
+      },
     });
 
   } catch (error) {

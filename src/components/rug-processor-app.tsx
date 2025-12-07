@@ -5,6 +5,9 @@ import { useDropzone } from 'react-dropzone';
 import { ProcessedRug, ProcessingStatus, BatchJob } from '@/types/rug';
 import { logger } from "@/lib/logger";
 import LogViewer from "./LogViewer";
+import AutomatedPipeline from "./AutomatedPipeline";
+
+import { PipelineState } from '@/lib/batch-pipeline';
 
 export default function RugProcessorApp() {
   const [processedRugs, setProcessedRugs] = useState<ProcessedRug[]>([]);
@@ -27,10 +30,11 @@ export default function RugProcessorApp() {
 
   // Chunking state
   const [chunkingMode, setChunkingMode] = useState(false);
+  const [automatedMode, setAutomatedMode] = useState(false); // NEW: Automated pipeline mode
   const [chunks, setChunks] = useState<{ filename: string; size: number }[]>(
     []
   );
-  const [chunkSize, setChunkSize] = useState(150);
+  const [chunkSize, setChunkSize] = useState(75); // Optimized for batches WITH images
   const [chunkedFile, setChunkedFile] = useState<File | null>(null);
 
   // Session management
@@ -549,41 +553,100 @@ export default function RugProcessorApp() {
         </div>
 
         {/* Mode Toggle */}
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex gap-2 flex-wrap">
           <button
-            onClick={() => setChunkingMode(false)}
+            onClick={() => { setChunkingMode(false); setAutomatedMode(false); }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              !chunkingMode
+              !chunkingMode && !automatedMode
                 ? "bg-blue-600 text-white"
                 : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
             }`}
             disabled={processing}
           >
-            Process for AI (Full Pipeline)
+            Manual Processing
           </button>
           <button
-            onClick={() => setChunkingMode(true)}
+            onClick={() => { setChunkingMode(true); setAutomatedMode(false); }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              chunkingMode
+              chunkingMode && !automatedMode
                 ? "bg-blue-600 text-white"
                 : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
             }`}
             disabled={processing}
           >
-            Split Large CSV (~5700 lines)
+            Split CSV Only
+          </button>
+          <button
+            onClick={() => { setChunkingMode(false); setAutomatedMode(true); }}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              automatedMode
+                ? "bg-green-600 text-white"
+                : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+            }`}
+            disabled={processing}
+          >
+            🚀 Automated Pipeline (5500+ rugs)
           </button>
         </div>
       </div>
 
+      {/* Automated Pipeline Section */}
+      {automatedMode && processedRugs.length > 0 && (
+        <AutomatedPipeline
+          rugs={processedRugs}
+          chunkSize={chunkSize}
+          concurrentLimit={5}
+          onComplete={(result: PipelineState) => {
+            logger.info('PIPELINE', 'Automated pipeline completed', {
+              completed: result.completedCount,
+              failed: result.failedCount
+            });
+            setStatus({
+              total: result.totalRugs,
+              processed: result.completedCount * chunkSize,
+              errors: result.failedCount * chunkSize,
+              status: 'complete',
+              currentStep: `Pipeline completed: ${result.completedCount} chunks successful, ${result.failedCount} failed`
+            });
+          }}
+        />
+      )}
+
+      {/* Automated Mode Upload Prompt */}
+      {automatedMode && processedRugs.length === 0 && (
+        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg shadow-md p-6 border-2 border-green-300 dark:border-green-700">
+          <h2 className="text-2xl font-semibold mb-4 text-green-800 dark:text-green-300">
+            🚀 Automated Pipeline Ready
+          </h2>
+          <p className="text-green-700 dark:text-green-400 mb-4">
+            Upload your CSV file above to start the automated pipeline. The system will:
+          </p>
+          <ol className="list-decimal list-inside space-y-2 text-green-700 dark:text-green-400">
+            <li>Split your {">"}5000 rugs into chunks of {chunkSize} each</li>
+            <li>Process 5 chunks in parallel</li>
+            <li>Download images and generate JSONL for each chunk</li>
+            <li>Submit to Gemini Batch API</li>
+            <li>Wait for results, then continue with next chunks</li>
+            <li>Repeat until all chunks are processed</li>
+          </ol>
+          <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+            <p className="text-sm text-yellow-800 dark:text-yellow-300">
+              ⚠️ <strong>Note:</strong> This process may take several hours for large datasets. 
+              You can pause/resume at any time.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* CSV Chunking Section */}
-      {chunkingMode && (
+      {chunkingMode && !automatedMode && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
           <h2 className="text-2xl font-semibold mb-4">
             📂 Split Large CSV File
           </h2>
           <p className="text-gray-600 dark:text-gray-400 mb-4">
-            Split your large CSV file (like 5700 lines) into smaller chunks of{" "}
-            {chunkSize} lines each for easier processing.
+            Split your large CSV file into smaller chunks of {chunkSize} rugs
+            each. Optimized for batch processing with images (~75 recommended).
           </p>
 
           {/* Chunk Size Input */}
@@ -676,8 +739,8 @@ export default function RugProcessorApp() {
         </div>
       )}
 
-      {/* Main Processing Sections - Only show when not in chunking mode */}
-      {!chunkingMode && (
+      {/* Main Processing Sections - Only show when not in chunking mode and not in automated mode */}
+      {!chunkingMode && !automatedMode && (
         <>
           {/* Status Section */}
           {status.status !== "idle" && (

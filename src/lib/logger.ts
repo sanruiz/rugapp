@@ -55,10 +55,34 @@ class Logger {
   private sessions: Map<string, ProcessingSession> = new Map();
   private currentSessionId: string | null = null;
   private logLevel: LogLevel = LogLevel.INFO;
+  private isHydrated: boolean = false;
+  private hydrationListeners: Set<() => void> = new Set();
 
   constructor() {
-    // Load logs from localStorage if available
+    // Don't load from storage in constructor - wait for client-side hydration
+  }
+
+  // Call this method from client-side useEffect to hydrate logs
+  hydrate(): void {
+    if (this.isHydrated) return;
     this.loadFromStorage();
+    this.isHydrated = true;
+    // Notify all listeners that hydration is complete
+    this.hydrationListeners.forEach((listener) => listener());
+  }
+
+  onHydrate(listener: () => void): () => void {
+    this.hydrationListeners.add(listener);
+    // If already hydrated, call immediately
+    if (this.isHydrated) {
+      listener();
+    }
+    // Return unsubscribe function
+    return () => this.hydrationListeners.delete(listener);
+  }
+
+  getIsHydrated(): boolean {
+    return this.isHydrated;
   }
 
   private generateId(): string {
@@ -66,35 +90,52 @@ class Logger {
   }
 
   private saveToStorage(): void {
+    // Check if we're in the browser environment
+    if (typeof window === "undefined") {
+      return;
+    }
+
     try {
       const logsData = {
         logs: this.logs.slice(-1000), // Keep last 1000 logs
-        sessions: Array.from(this.sessions.entries()).slice(-50) // Keep last 50 sessions
+        sessions: Array.from(this.sessions.entries()).slice(-50), // Keep last 50 sessions
       };
-      localStorage.setItem('rugapp-logs', JSON.stringify(logsData, (key, value) => {
-        if (value instanceof Date) {
-          return { __type: 'Date', value: value.toISOString() };
-        }
-        if (value instanceof Error) {
-          return { __type: 'Error', message: value.message, stack: value.stack };
-        }
-        return value;
-      }));
+      localStorage.setItem(
+        "rugapp-logs",
+        JSON.stringify(logsData, (key, value) => {
+          if (value instanceof Date) {
+            return { __type: "Date", value: value.toISOString() };
+          }
+          if (value instanceof Error) {
+            return {
+              __type: "Error",
+              message: value.message,
+              stack: value.stack,
+            };
+          }
+          return value;
+        })
+      );
     } catch (error) {
-      console.error('Failed to save logs to storage:', error);
+      console.error("Failed to save logs to storage:", error);
     }
   }
 
   private loadFromStorage(): void {
+    // Check if we're in the browser environment
+    if (typeof window === "undefined") {
+      return;
+    }
+
     try {
-      const stored = localStorage.getItem('rugapp-logs');
+      const stored = localStorage.getItem("rugapp-logs");
       if (stored) {
         const data = JSON.parse(stored, (key, value) => {
-          if (value && typeof value === 'object') {
-            if (value.__type === 'Date') {
+          if (value && typeof value === "object") {
+            if (value.__type === "Date") {
               return new Date(value.value);
             }
-            if (value.__type === 'Error') {
+            if (value.__type === "Error") {
               const error = new Error(value.message);
               error.stack = value.stack;
               return error;
@@ -102,12 +143,12 @@ class Logger {
           }
           return value;
         });
-        
+
         this.logs = data.logs || [];
         this.sessions = new Map(data.sessions || []);
       }
     } catch (error) {
-      console.error('Failed to load logs from storage:', error);
+      console.error("Failed to load logs from storage:", error);
     }
   }
 
@@ -115,7 +156,11 @@ class Logger {
     this.logLevel = level;
   }
 
-  startSession(mode: 'processing' | 'chunking', totalRugs: number, chunkSize?: number): string {
+  startSession(
+    mode: "processing" | "chunking",
+    totalRugs: number,
+    chunkSize?: number
+  ): string {
     const sessionId = this.generateId();
     const session: ProcessingSession = {
       id: sessionId,
@@ -125,49 +170,58 @@ class Logger {
       failedRugs: 0,
       chunkSize,
       mode,
-      status: 'active',
-      logs: []
+      status: "active",
+      logs: [],
     };
-    
+
     this.sessions.set(sessionId, session);
     this.currentSessionId = sessionId;
-    
-    this.log(LogLevel.INFO, 'SESSION', `Started ${mode} session for ${totalRugs} rugs`, {
-      sessionId,
-      chunkSize
-    });
-    
+
+    this.log(
+      LogLevel.INFO,
+      "SESSION",
+      `Started ${mode} session for ${totalRugs} rugs`,
+      {
+        sessionId,
+        chunkSize,
+      }
+    );
+
     return sessionId;
   }
 
   endSession(sessionId?: string): void {
     const id = sessionId || this.currentSessionId;
     if (!id) return;
-    
+
     const session = this.sessions.get(id);
     if (session) {
       session.endTime = new Date();
-      session.status = session.failedRugs > 0 ? 'failed' : 'completed';
-      
-      this.log(LogLevel.INFO, 'SESSION', `Ended session ${id}`, {
+      session.status = session.failedRugs > 0 ? "failed" : "completed";
+
+      this.log(LogLevel.INFO, "SESSION", `Ended session ${id}`, {
         sessionId: id,
         duration: session.endTime.getTime() - session.startTime.getTime(),
         processedRugs: session.processedRugs,
-        failedRugs: session.failedRugs
+        failedRugs: session.failedRugs,
       });
     }
-    
+
     if (this.currentSessionId === id) {
       this.currentSessionId = null;
     }
-    
+
     this.saveToStorage();
   }
 
-  updateSessionProgress(processedRugs: number, failedRugs?: number, sessionId?: string): void {
+  updateSessionProgress(
+    processedRugs: number,
+    failedRugs?: number,
+    sessionId?: string
+  ): void {
     const id = sessionId || this.currentSessionId;
     if (!id) return;
-    
+
     const session = this.sessions.get(id);
     if (session) {
       session.processedRugs = processedRugs;
@@ -177,7 +231,13 @@ class Logger {
     }
   }
 
-  private log(level: LogLevel, category: string, message: string, data?: LogData, error?: Error): void {
+  private log(
+    level: LogLevel,
+    category: string,
+    message: string,
+    data?: LogData,
+    error?: Error
+  ): void {
     if (level < this.logLevel) return;
 
     const logEntry: LogEntry = {
@@ -188,18 +248,19 @@ class Logger {
       message,
       data,
       error,
-      sessionId: this.currentSessionId || undefined
+      sessionId: this.currentSessionId || undefined,
     };
 
     // Extract common context from data
     if (data) {
       if (data.rugSku) logEntry.rugSku = data.rugSku as string;
-      if (data.chunkIndex !== undefined) logEntry.chunkIndex = data.chunkIndex as number;
+      if (data.chunkIndex !== undefined)
+        logEntry.chunkIndex = data.chunkIndex as number;
       if (data.batchId) logEntry.batchId = data.batchId as string;
     }
 
     this.logs.push(logEntry);
-    
+
     // Add to current session if active
     if (this.currentSessionId) {
       const session = this.sessions.get(this.currentSessionId);
@@ -209,9 +270,9 @@ class Logger {
     }
 
     // Console output for development
-    const levelNames = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    const levelNames = ["DEBUG", "INFO", "WARN", "ERROR"];
     const prefix = `[${levelNames[level]}][${category}]`;
-    
+
     if (error) {
       console.error(prefix, message, data, error);
     } else if (level >= LogLevel.WARN) {
@@ -238,38 +299,97 @@ class Logger {
     this.log(LogLevel.WARN, category, message, data);
   }
 
-  error(category: string, message: string, error?: Error, data?: LogData): void {
+  error(
+    category: string,
+    message: string,
+    error?: Error,
+    data?: LogData
+  ): void {
     this.log(LogLevel.ERROR, category, message, data, error);
   }
 
   // Specialized logging methods for common operations
-  logRugProcessing(rugSku: string, step: string, success: boolean, data?: LogData, error?: Error): void {
+  logRugProcessing(
+    rugSku: string,
+    step: string,
+    success: boolean,
+    data?: LogData,
+    error?: Error
+  ): void {
     const level = success ? LogLevel.INFO : LogLevel.ERROR;
-    const message = `Rug ${rugSku}: ${step} ${success ? 'completed' : 'failed'}`;
-    this.log(level, 'RUG_PROCESSING', message, { rugSku, step, ...data }, error);
+    const message = `Rug ${rugSku}: ${step} ${
+      success ? "completed" : "failed"
+    }`;
+    this.log(
+      level,
+      "RUG_PROCESSING",
+      message,
+      { rugSku, step, ...data },
+      error
+    );
   }
 
-  logChunkOperation(chunkIndex: number, operation: string, success: boolean, data?: LogData, error?: Error): void {
+  logChunkOperation(
+    chunkIndex: number,
+    operation: string,
+    success: boolean,
+    data?: LogData,
+    error?: Error
+  ): void {
     const level = success ? LogLevel.INFO : LogLevel.ERROR;
-    const message = `Chunk ${chunkIndex}: ${operation} ${success ? 'completed' : 'failed'}`;
-    this.log(level, 'CHUNK_OPERATION', message, { chunkIndex, operation, ...data }, error);
+    const message = `Chunk ${chunkIndex}: ${operation} ${
+      success ? "completed" : "failed"
+    }`;
+    this.log(
+      level,
+      "CHUNK_OPERATION",
+      message,
+      { chunkIndex, operation, ...data },
+      error
+    );
   }
 
-  logBatchOperation(batchId: string, operation: string, status: string, data?: LogData, error?: Error): void {
-    const level = status === 'failed' ? LogLevel.ERROR : LogLevel.INFO;
+  logBatchOperation(
+    batchId: string,
+    operation: string,
+    status: string,
+    data?: LogData,
+    error?: Error
+  ): void {
+    const level = status === "failed" ? LogLevel.ERROR : LogLevel.INFO;
     const message = `Batch ${batchId}: ${operation} - ${status}`;
-    this.log(level, 'BATCH_OPERATION', message, { batchId, operation, status, ...data }, error);
+    this.log(
+      level,
+      "BATCH_OPERATION",
+      message,
+      { batchId, operation, status, ...data },
+      error
+    );
   }
 
-  logAPICall(endpoint: string, method: string, success: boolean, responseTime?: number, error?: Error): void {
+  logAPICall(
+    endpoint: string,
+    method: string,
+    success: boolean,
+    responseTime?: number,
+    error?: Error
+  ): void {
     const level = success ? LogLevel.INFO : LogLevel.ERROR;
-    const message = `API ${method} ${endpoint} ${success ? 'succeeded' : 'failed'}`;
-    this.log(level, 'API_CALL', message, { endpoint, method, responseTime }, error);
+    const message = `API ${method} ${endpoint} ${
+      success ? "succeeded" : "failed"
+    }`;
+    this.log(
+      level,
+      "API_CALL",
+      message,
+      { endpoint, method, responseTime },
+      error
+    );
   }
 
   // Query methods
   getLogs(sessionId?: string, category?: string, level?: LogLevel): LogEntry[] {
-    return this.logs.filter(log => {
+    return this.logs.filter((log) => {
       if (sessionId && log.sessionId !== sessionId) return false;
       if (category && log.category !== category) return false;
       if (level !== undefined && log.level < level) return false;
@@ -282,8 +402,8 @@ class Logger {
   }
 
   getAllSessions(): ProcessingSession[] {
-    return Array.from(this.sessions.values()).sort((a, b) => 
-      b.startTime.getTime() - a.startTime.getTime()
+    return Array.from(this.sessions.values()).sort(
+      (a, b) => b.startTime.getTime() - a.startTime.getTime()
     );
   }
 
@@ -294,16 +414,16 @@ class Logger {
   exportLogs(sessionId?: string): string {
     const logs = sessionId ? this.getLogs(sessionId) : this.logs;
     const session = sessionId ? this.getSession(sessionId) : null;
-    
+
     const exportData = {
       exportTime: new Date().toISOString(),
       session,
-      logs: logs.map(log => ({
+      logs: logs.map((log) => ({
         ...log,
-        timestamp: log.timestamp.toISOString()
-      }))
+        timestamp: log.timestamp.toISOString(),
+      })),
     };
-    
+
     return JSON.stringify(exportData, null, 2);
   }
 
@@ -313,7 +433,7 @@ class Logger {
       if (session) {
         session.logs = [];
       }
-      this.logs = this.logs.filter(log => log.sessionId !== sessionId);
+      this.logs = this.logs.filter((log) => log.sessionId !== sessionId);
     } else {
       this.logs = [];
       this.sessions.clear();
@@ -323,10 +443,11 @@ class Logger {
 
   // Retry helpers
   getRetryableOperations(sessionId?: string): LogEntry[] {
-    return this.getFailedOperations(sessionId).filter(log => 
-      log.category === 'RUG_PROCESSING' || 
-      log.category === 'CHUNK_OPERATION' || 
-      log.category === 'BATCH_OPERATION'
+    return this.getFailedOperations(sessionId).filter(
+      (log) =>
+        log.category === "RUG_PROCESSING" ||
+        log.category === "CHUNK_OPERATION" ||
+        log.category === "BATCH_OPERATION"
     );
   }
 }

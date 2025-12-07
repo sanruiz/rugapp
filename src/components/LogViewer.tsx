@@ -1,12 +1,27 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 import { logger, LogLevel } from "@/lib/logger";
 
 interface LogViewerProps {
   sessionId?: string;
   maxEntries?: number;
   showDebug?: boolean;
+}
+
+// Custom hook to safely handle client-side hydration
+function useIsClient() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
 }
 
 export default function LogViewer({
@@ -23,25 +38,51 @@ export default function LogViewer({
   const [filterCategory, setFilterCategory] = useState<string>("");
   const [isExpanded, setIsExpanded] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const isClient = useIsClient();
+
+  // Hydrate logger on client-side mount
+  useEffect(() => {
+    if (isClient) {
+      logger.hydrate();
+    }
+
+    // Subscribe to future hydration events (in case of hot reload)
+    const unsubscribe = logger.onHydrate(() => {
+      setRefreshKey((prev) => prev + 1);
+    });
+
+    return unsubscribe;
+  }, [isClient]);
 
   // Compute logs based on current filters - this is derived state
   const logs = useMemo(() => {
     // refreshKey triggers re-computation for auto-refresh
     void refreshKey;
+    // Return empty array during SSR to prevent hydration mismatch
+    if (!isClient) return [];
     const allLogs = logger.getLogs(
       selectedSession,
       filterCategory,
       filterLevel
     );
     return allLogs.slice(-maxEntries);
-  }, [selectedSession, filterCategory, filterLevel, maxEntries, refreshKey]);
+  }, [
+    selectedSession,
+    filterCategory,
+    filterLevel,
+    maxEntries,
+    refreshKey,
+    isClient,
+  ]);
 
   // Compute sessions - this is derived state
   const sessions = useMemo(() => {
     // refreshKey triggers re-computation for auto-refresh
     void refreshKey;
+    // Return empty array during SSR to prevent hydration mismatch
+    if (!isClient) return [];
     return logger.getAllSessions().slice(0, 10);
-  }, [refreshKey]);
+  }, [refreshKey, isClient]);
 
   // Auto-refresh timer - only updates the refresh key
   useEffect(() => {
