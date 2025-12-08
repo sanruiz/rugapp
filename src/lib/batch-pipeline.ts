@@ -23,6 +23,8 @@ export interface PipelineChunk {
   resultsDownloaded?: boolean;
   imagesExtracted?: number;
   downloadError?: string;
+  // SKU mapping for image extraction
+  skuMapping?: Array<{ index: number; sku: string; key: string }>;
 }
 
 export interface PipelineState {

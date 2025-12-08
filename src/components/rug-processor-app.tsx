@@ -6,6 +6,7 @@ import { ProcessedRug, ProcessingStatus, BatchJob } from '@/types/rug';
 import { logger } from "@/lib/logger";
 import LogViewer from "./LogViewer";
 import AutomatedPipeline from "./AutomatedPipeline";
+import { PIPELINE_CONFIG } from "@/lib/config";
 
 import { PipelineState } from '@/lib/batch-pipeline';
 
@@ -34,7 +35,7 @@ export default function RugProcessorApp() {
   const [chunks, setChunks] = useState<{ filename: string; size: number }[]>(
     []
   );
-  const [chunkSize, setChunkSize] = useState(75); // Optimized for batches WITH images
+  const [chunkSize, setChunkSize] = useState<number>(PIPELINE_CONFIG.chunkSize);
   const [chunkedFile, setChunkedFile] = useState<File | null>(null);
 
   // Session management
@@ -555,7 +556,10 @@ export default function RugProcessorApp() {
         {/* Mode Toggle */}
         <div className="mt-4 flex gap-2 flex-wrap">
           <button
-            onClick={() => { setChunkingMode(false); setAutomatedMode(false); }}
+            onClick={() => {
+              setChunkingMode(false);
+              setAutomatedMode(false);
+            }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               !chunkingMode && !automatedMode
                 ? "bg-blue-600 text-white"
@@ -566,7 +570,10 @@ export default function RugProcessorApp() {
             Manual Processing
           </button>
           <button
-            onClick={() => { setChunkingMode(true); setAutomatedMode(false); }}
+            onClick={() => {
+              setChunkingMode(true);
+              setAutomatedMode(false);
+            }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               chunkingMode && !automatedMode
                 ? "bg-blue-600 text-white"
@@ -577,7 +584,10 @@ export default function RugProcessorApp() {
             Split CSV Only
           </button>
           <button
-            onClick={() => { setChunkingMode(false); setAutomatedMode(true); }}
+            onClick={() => {
+              setChunkingMode(false);
+              setAutomatedMode(true);
+            }}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               automatedMode
                 ? "bg-green-600 text-white"
@@ -595,18 +605,18 @@ export default function RugProcessorApp() {
         <AutomatedPipeline
           rugs={processedRugs}
           chunkSize={chunkSize}
-          concurrentLimit={5}
+          concurrentLimit={PIPELINE_CONFIG.concurrentLimit}
           onComplete={(result: PipelineState) => {
-            logger.info('PIPELINE', 'Automated pipeline completed', {
+            logger.info("PIPELINE", "Automated pipeline completed", {
               completed: result.completedCount,
-              failed: result.failedCount
+              failed: result.failedCount,
             });
             setStatus({
               total: result.totalRugs,
               processed: result.completedCount * chunkSize,
               errors: result.failedCount * chunkSize,
-              status: 'complete',
-              currentStep: `Pipeline completed: ${result.completedCount} chunks successful, ${result.failedCount} failed`
+              status: "complete",
+              currentStep: `Pipeline completed: ${result.completedCount} chunks successful, ${result.failedCount} failed`,
             });
           }}
         />
@@ -619,10 +629,13 @@ export default function RugProcessorApp() {
             🚀 Automated Pipeline Ready
           </h2>
           <p className="text-green-700 dark:text-green-400 mb-4">
-            Upload your CSV file above to start the automated pipeline. The system will:
+            Upload your CSV file above to start the automated pipeline. The
+            system will:
           </p>
           <ol className="list-decimal list-inside space-y-2 text-green-700 dark:text-green-400">
-            <li>Split your {">"}5000 rugs into chunks of {chunkSize} each</li>
+            <li>
+              Split your {">"}5000 rugs into chunks of {chunkSize} each
+            </li>
             <li>Process 5 chunks in parallel</li>
             <li>Download images and generate JSONL for each chunk</li>
             <li>Submit to Gemini Batch API</li>
@@ -631,8 +644,8 @@ export default function RugProcessorApp() {
           </ol>
           <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
             <p className="text-sm text-yellow-800 dark:text-yellow-300">
-              ⚠️ <strong>Note:</strong> This process may take several hours for large datasets. 
-              You can pause/resume at any time.
+              ⚠️ <strong>Note:</strong> This process may take several hours for
+              large datasets. You can pause/resume at any time.
             </p>
           </div>
         </div>

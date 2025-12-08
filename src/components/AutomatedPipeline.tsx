@@ -12,6 +12,7 @@ import {
   formatTimeRemaining
 } from '@/lib/batch-pipeline';
 import { logger } from '@/lib/logger';
+import { PIPELINE_CONFIG } from "@/lib/config";
 
 interface AutomatedPipelineProps {
   rugs: ProcessedRug[];
@@ -22,17 +23,14 @@ interface AutomatedPipelineProps {
 
 export default function AutomatedPipeline({
   rugs,
-  chunkSize = 75,
-  concurrentLimit = 5,
-  onComplete
+  chunkSize = PIPELINE_CONFIG.chunkSize,
+  concurrentLimit = PIPELINE_CONFIG.concurrentLimit,
+  onComplete,
 }: AutomatedPipelineProps) {
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [progress, setProgress] = useState<PipelineProgress | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [downloadedResults, setDownloadedResults] = useState<
-    Map<number, { content: string; images: unknown[] }>
-  >(new Map());
   const pollingIntervalsRef = useRef<Map<number, NodeJS.Timeout>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -53,15 +51,37 @@ export default function AutomatedPipeline({
   }, [pipeline]);
 
   // Download results for a completed chunk
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const downloadChunkResults = useCallback(
-    async (chunkIndex: number, outputFile: string, _batchId: string) => {
+    async (
+      chunkIndex: number,
+      outputFile: string,
+      skuMapping?: Array<{ index: number; sku: string; key: string }>
+    ) => {
       try {
         logger.info(
           "PIPELINE",
           `Downloading results for chunk ${chunkIndex + 1}...`,
-          { chunkIndex, outputFile }
+          {
+            chunkIndex,
+            outputFile,
+            hasSkuMapping: !!skuMapping,
+            skuMappingLength: skuMapping?.length,
+          }
         );
+
+        // Debug: log first few SKU mappings
+        if (skuMapping && skuMapping.length > 0) {
+          console.log(
+            `[downloadChunkResults] SKU mapping sample for chunk ${
+              chunkIndex + 1
+            }:`,
+            skuMapping.slice(0, 3)
+          );
+        } else {
+          console.log(
+            `[downloadChunkResults] NO SKU mapping for chunk ${chunkIndex + 1}`
+          );
+        }
 
         // Download the batch results
         const downloadResponse = await fetch(
@@ -73,43 +93,41 @@ export default function AutomatedPipeline({
           throw new Error(downloadResult.error || "Failed to download results");
         }
 
-        // Extract images from results
-        const extractResponse = await fetch("/api/extract-images", {
+        // Save to disk and extract images on server
+        const saveResponse = await fetch("/api/save-and-extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ batchResults: downloadResult.data.content }),
+          body: JSON.stringify({
+            jsonlContent: downloadResult.data.content,
+            chunkIndex,
+            skuMapping, // Pass SKU mapping for proper file naming
+          }),
         });
 
-        const extractResult = await extractResponse.json();
-        const images = extractResult.success ? extractResult.data : [];
+        const saveResult = await saveResponse.json();
 
-        // Save to downloaded results
-        setDownloadedResults((prev) => {
-          const newMap = new Map(prev);
-          newMap.set(chunkIndex, {
-            content: downloadResult.data.content,
-            images,
+        if (!saveResult.success) {
+          logger.warn(
+            "PIPELINE",
+            `Failed to save to disk: ${saveResult.error}`,
+            { chunkIndex }
+          );
+        } else {
+          logger.info("PIPELINE", `Chunk ${chunkIndex + 1} saved to disk`, {
+            chunkIndex,
+            imagesExtracted: saveResult.data.extractedImages,
+            errors: saveResult.data.errors?.length || 0,
           });
-          return newMap;
-        });
+        }
 
-        // Auto-save results file
-        const blob = new Blob([downloadResult.data.content], {
-          type: "application/jsonl",
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `batch-results-chunk-${chunkIndex + 1}.jsonl`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const imagesExtracted = saveResult.success
+          ? saveResult.data.extractedImages
+          : 0;
 
-        logger.info("PIPELINE", `Chunk ${chunkIndex + 1} results downloaded!`, {
+        logger.info("PIPELINE", `Chunk ${chunkIndex + 1} results processed!`, {
           chunkIndex,
           resultCount: downloadResult.data.resultCount,
-          imagesExtracted: images.length,
+          imagesExtracted,
         });
 
         // Update chunk status to completed
@@ -121,7 +139,7 @@ export default function AutomatedPipeline({
             status: "completed",
             endTime: new Date(),
             resultsDownloaded: true,
-            imagesExtracted: images.length,
+            imagesExtracted,
           };
           return { ...prev, chunks: newChunks };
         });
@@ -193,7 +211,15 @@ export default function AutomatedPipeline({
                 // Download results in background
                 const outputFile = result.data.outputFile;
                 if (outputFile) {
-                  downloadChunkResults(chunkIndex, outputFile, batchId);
+                  // Get skuMapping from the chunk
+                  const chunkSkuMapping = newChunks[chunkIndex].skuMapping;
+                  console.log(
+                    `[polling] Chunk ${chunkIndex + 1} - skuMapping in state:`,
+                    chunkSkuMapping
+                      ? `${chunkSkuMapping.length} entries`
+                      : "NONE"
+                  );
+                  downloadChunkResults(chunkIndex, outputFile, chunkSkuMapping);
                 } else {
                   // No output file, mark as completed anyway
                   newChunks[chunkIndex] = {
@@ -250,7 +276,7 @@ export default function AutomatedPipeline({
         } catch (error) {
           console.error(`Error polling batch ${batchId}:`, error);
         }
-      }, 15000);
+      }, PIPELINE_CONFIG.pollingInterval);
 
       pollingIntervalsRef.current.set(chunkIndex, pollInterval);
     },
@@ -258,82 +284,110 @@ export default function AutomatedPipeline({
   );
 
   // Process a single chunk
-  const processChunk = useCallback(async (chunkIndex: number, chunkRugs: ProcessedRug[]) => {
-    setPipeline(prev => {
-      if (!prev) return prev;
-      const newChunks = [...prev.chunks];
-      newChunks[chunkIndex] = {
-        ...newChunks[chunkIndex],
-        status: 'downloading_images',
-        startTime: new Date()
-      };
-      return {
-        ...prev,
-        chunks: newChunks,
-        currentlyProcessing: [...prev.currentlyProcessing, chunkIndex]
-      };
-    });
-
-    try {
-      logger.info('PIPELINE', `Starting chunk ${chunkIndex + 1}`, { chunkIndex });
-
-      const response = await fetch('/api/process-chunk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rugs: chunkRugs,
-          chunkIndex,
-          includeImages: true
-        }),
-        signal: abortControllerRef.current?.signal
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setPipeline(prev => {
-          if (!prev) return prev;
-          const newChunks = [...prev.chunks];
-          newChunks[chunkIndex] = {
-            ...newChunks[chunkIndex],
-            status: 'processing',
-            batchId: result.data.batchId,
-            batchJob: result.data.batchJob
-          };
-          return { ...prev, chunks: newChunks };
-        });
-
-        startPollingForChunk(chunkIndex, result.data.batchId);
-      } else {
-        throw new Error(result.error || 'Failed to process chunk');
-      }
-
-    } catch (error) {
-      if ((error as Error).name === 'AbortError') {
-        logger.info('PIPELINE', `Chunk ${chunkIndex + 1} aborted`, { chunkIndex });
-        return;
-      }
-
-      logger.error('PIPELINE', `Chunk ${chunkIndex + 1} failed`, error as Error, { chunkIndex });
-      
-      setPipeline(prev => {
+  const processChunk = useCallback(
+    async (chunkIndex: number, chunkRugs: ProcessedRug[]) => {
+      setPipeline((prev) => {
         if (!prev) return prev;
         const newChunks = [...prev.chunks];
         newChunks[chunkIndex] = {
           ...newChunks[chunkIndex],
-          status: 'failed',
-          error: (error as Error).message,
-          endTime: new Date()
+          status: "downloading_images",
+          startTime: new Date(),
         };
         return {
           ...prev,
           chunks: newChunks,
-          currentlyProcessing: prev.currentlyProcessing.filter(i => i !== chunkIndex),
-          failedCount: prev.failedCount + 1
+          currentlyProcessing: [...prev.currentlyProcessing, chunkIndex],
         };
       });
-    }
-  }, [startPollingForChunk]);
+
+      try {
+        logger.info("PIPELINE", `Starting chunk ${chunkIndex + 1}`, {
+          chunkIndex,
+        });
+
+        const response = await fetch("/api/process-chunk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rugs: chunkRugs,
+            chunkIndex,
+            includeImages: true,
+          }),
+          signal: abortControllerRef.current?.signal,
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          // Debug: log SKU mapping received from process-chunk
+          console.log(
+            `[processChunk] Chunk ${chunkIndex + 1} - SKU mapping received:`,
+            result.data.skuMapping
+              ? `${result.data.skuMapping.length} entries`
+              : "NONE"
+          );
+          if (result.data.skuMapping?.length > 0) {
+            console.log(
+              `[processChunk] Sample:`,
+              result.data.skuMapping.slice(0, 3)
+            );
+          }
+
+          setPipeline((prev) => {
+            if (!prev) return prev;
+            const newChunks = [...prev.chunks];
+            newChunks[chunkIndex] = {
+              ...newChunks[chunkIndex],
+              status: "processing",
+              batchId: result.data.batchId,
+              batchJob: result.data.batchJob,
+              skuMapping: result.data.skuMapping, // Save SKU mapping for image extraction
+            };
+            return { ...prev, chunks: newChunks };
+          });
+
+          startPollingForChunk(chunkIndex, result.data.batchId);
+        } else {
+          throw new Error(result.error || "Failed to process chunk");
+        }
+      } catch (error) {
+        if ((error as Error).name === "AbortError") {
+          logger.info("PIPELINE", `Chunk ${chunkIndex + 1} aborted`, {
+            chunkIndex,
+          });
+          return;
+        }
+
+        logger.error(
+          "PIPELINE",
+          `Chunk ${chunkIndex + 1} failed`,
+          error as Error,
+          { chunkIndex }
+        );
+
+        setPipeline((prev) => {
+          if (!prev) return prev;
+          const newChunks = [...prev.chunks];
+          newChunks[chunkIndex] = {
+            ...newChunks[chunkIndex],
+            status: "failed",
+            error: (error as Error).message,
+            endTime: new Date(),
+          };
+          return {
+            ...prev,
+            chunks: newChunks,
+            currentlyProcessing: prev.currentlyProcessing.filter(
+              (i) => i !== chunkIndex
+            ),
+            failedCount: prev.failedCount + 1,
+          };
+        });
+      }
+    },
+    [startPollingForChunk]
+  );
 
   // Main pipeline loop
   useEffect(() => {
@@ -341,18 +395,20 @@ export default function AutomatedPipeline({
 
     const runNextBatch = async () => {
       const nextChunks = getNextChunksToProcess(pipeline);
-      
+
       if (nextChunks.length === 0) {
-        const allDone = pipeline.chunks.every(c => 
-          c.status === 'completed' || c.status === 'failed'
+        const allDone = pipeline.chunks.every(
+          (c) => c.status === "completed" || c.status === "failed"
         );
-        
+
         if (allDone) {
           setIsRunning(false);
-          setPipeline(prev => prev ? { ...prev, status: 'completed', endTime: new Date() } : prev);
-          logger.info('PIPELINE', 'Pipeline completed!', {
+          setPipeline((prev) =>
+            prev ? { ...prev, status: "completed", endTime: new Date() } : prev
+          );
+          logger.info("PIPELINE", "Pipeline completed!", {
             completed: pipeline.completedCount,
-            failed: pipeline.failedCount
+            failed: pipeline.failedCount,
           });
           onComplete?.(pipeline);
         }
@@ -360,7 +416,7 @@ export default function AutomatedPipeline({
       }
 
       await Promise.all(
-        nextChunks.map(idx => {
+        nextChunks.map((idx) => {
           const chunk = pipeline.chunks[idx];
           return processChunk(idx, chunk.rugs);
         })
@@ -372,51 +428,55 @@ export default function AutomatedPipeline({
 
   const startPipeline = () => {
     if (!pipeline) return;
-    
+
     abortControllerRef.current = new AbortController();
     setIsRunning(true);
     setIsPaused(false);
-    
-    setPipeline(prev => prev ? { 
-      ...prev, 
-      status: 'running', 
-      startTime: new Date() 
-    } : prev);
-    
-    logger.info('PIPELINE', 'Pipeline started', {
+
+    setPipeline((prev) =>
+      prev
+        ? {
+            ...prev,
+            status: "running",
+            startTime: new Date(),
+          }
+        : prev
+    );
+
+    logger.info("PIPELINE", "Pipeline started", {
       totalChunks: pipeline.chunks.length,
-      concurrentLimit
+      concurrentLimit,
     });
   };
 
   const pausePipeline = () => {
     setIsPaused(true);
-    setPipeline(prev => prev ? { ...prev, status: 'paused' } : prev);
-    logger.info('PIPELINE', 'Pipeline paused');
+    setPipeline((prev) => (prev ? { ...prev, status: "paused" } : prev));
+    logger.info("PIPELINE", "Pipeline paused");
   };
 
   const resumePipeline = () => {
     setIsPaused(false);
-    setPipeline(prev => prev ? { ...prev, status: 'running' } : prev);
-    logger.info('PIPELINE', 'Pipeline resumed');
+    setPipeline((prev) => (prev ? { ...prev, status: "running" } : prev));
+    logger.info("PIPELINE", "Pipeline resumed");
   };
 
   const stopPipeline = () => {
     abortControllerRef.current?.abort();
     setIsRunning(false);
     setIsPaused(false);
-    
-    pollingIntervalsRef.current.forEach(interval => clearInterval(interval));
+
+    pollingIntervalsRef.current.forEach((interval) => clearInterval(interval));
     pollingIntervalsRef.current.clear();
-    
-    setPipeline(prev => prev ? { ...prev, status: 'idle' } : prev);
-    logger.info('PIPELINE', 'Pipeline stopped');
+
+    setPipeline((prev) => (prev ? { ...prev, status: "idle" } : prev));
+    logger.info("PIPELINE", "Pipeline stopped");
   };
 
   useEffect(() => {
     const intervals = pollingIntervalsRef.current;
     return () => {
-      intervals.forEach(interval => clearInterval(interval));
+      intervals.forEach((interval) => clearInterval(interval));
       abortControllerRef.current?.abort();
     };
   }, []);

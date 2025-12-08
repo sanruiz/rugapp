@@ -41,23 +41,36 @@ export function parseCSVFromBuffer(buffer: Buffer): Promise<CSVRow[]> {
 }
 
 export function mapRowToRugData(row: CSVRow): RugData {
-  const sku = row["SKU"] || "";
+  // Handle BOM (Byte Order Mark) in SKU column - Excel adds this to UTF-8 CSV files
+  const sku = row["SKU"] || row["\ufeffSKU"] || "";
+
+  // Debug: Log first row's keys to see what we're getting
+  const keys = Object.keys(row);
+  if (keys.length > 0) {
+    console.log(
+      "[CSV] Row keys sample:",
+      keys.slice(0, 3),
+      "SKU value:",
+      sku || "(empty)"
+    );
+  }
+
   const title = row["Title"] || "";
   const description = row["Description"] || "";
   const primaryCategory = row["Primary Category"] || "";
   const secondaryCategory = row["Secondary Category"] || "";
-  
+
   // Pile / Foundation (supports both variants)
   const pile = row["Pile"] || row["Rug Pile"] || "";
   const foundation = row["Foundation"] || row["Rug Foundation"] || "";
-  
+
   // Colors: supports names from both CSV variants
   const borderColor = row["borderColor"] || row["Rug Border Color"] || "";
   const fieldColor = row["fieldColor"] || row["Rug Field Color"] || "";
   const exactFieldColor = row["Exact Field Color"] || "";
-  
+
   const otherColorsRaw = row["otherColors"] || row["Other Color"] || "";
-  
+
   // Other fields
   const weight = row["Weight"] || "";
   const style = row["Style"] || "";
@@ -71,16 +84,19 @@ export function mapRowToRugData(row: CSVRow): RugData {
   const size = row["size"] || "";
   const totalSqFt = row["total Sq Ft"] || row["total_sq_ft"] || "";
   const stockShape = row["Stock Shape"] || "";
-  
+
   // Parse list of additional colors
   const otherColors = otherColorsRaw
-    ? otherColorsRaw.split(/[;,]/).map((c: string) => c.trim()).filter(Boolean)
+    ? otherColorsRaw
+        .split(/[;,]/)
+        .map((c: string) => c.trim())
+        .filter(Boolean)
     : [];
-  
+
   const shape = normalizeShape(stockShape);
   const ambiente = getAmbienteFromShape(shape);
   const decorStyle = getDecorStyle(primaryCategory);
-  
+
   return {
     sku,
     title,
@@ -107,7 +123,7 @@ export function mapRowToRugData(row: CSVRow): RugData {
     stockShape,
     shape,
     ambiente,
-    decorStyle
+    decorStyle,
   };
 }
 

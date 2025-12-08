@@ -27,6 +27,7 @@ export class GeminiService {
    */
   async createBatchRequest(
     rug: ProcessedRug,
+    index: number,
     includeImage: boolean = true
   ): Promise<{ request: BatchRequest; hasImage: boolean } | null> {
     try {
@@ -68,7 +69,7 @@ Using the rug image provided above, generate a photorealistic interior scene ima
         } else {
           logger.warn(
             "BATCH",
-            `✗ Failed to download image for rug ${rug.sku}`,
+            `✗ Failed to download image for rug ${rug.sku || index}`,
             {
               sku: rug.sku,
               imageUrl: rug.imageLink,
@@ -76,13 +77,16 @@ Using the rug image provided above, generate a photorealistic interior scene ima
           );
         }
       } else if (includeImage && !rug.imageLink) {
-        logger.warn("BATCH", `Rug ${rug.sku} has no image URL`, {
+        logger.warn("BATCH", `Rug ${rug.sku || index} has no image URL`, {
           sku: rug.sku,
         });
       }
 
+      // Generate a unique key - use SKU if available, otherwise use index
+      const rugKey = rug.sku ? `rug-${rug.sku}` : `rug-idx-${index}`;
+
       const batchRequest: BatchRequest = {
-        key: `rug-${rug.sku}`,
+        key: rugKey,
         request: {
           contents: [
             {
@@ -96,7 +100,7 @@ Using the rug image provided above, generate a photorealistic interior scene ima
     } catch (error) {
       logger.error(
         "BATCH",
-        `Error creating batch request for rug ${rug.sku}`,
+        `Error creating batch request for rug ${rug.sku || index}`,
         error as Error,
         { sku: rug.sku }
       );
@@ -131,7 +135,7 @@ Using the rug image provided above, generate a photorealistic interior scene ima
 
     for (let i = 0; i < rugs.length; i++) {
       const rug = rugs[i];
-      const result = await this.createBatchRequest(rug, includeImages);
+      const result = await this.createBatchRequest(rug, i, includeImages);
 
       if (result) {
         requests.push(result.request);

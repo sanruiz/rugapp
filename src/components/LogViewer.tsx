@@ -394,7 +394,7 @@ export default function LogViewer({
                     )}
                   </div>
                   <span className="text-xs text-gray-500">
-                    {log.timestamp.toLocaleTimeString()}
+                    {new Date(log.timestamp).toLocaleTimeString()}
                   </span>
                 </div>
 
