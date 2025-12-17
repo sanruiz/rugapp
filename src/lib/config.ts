@@ -8,7 +8,7 @@ export const PIPELINE_CONFIG = {
   // Number of rugs per batch chunk
   // - Testing: 10 (smaller chunks for faster iteration)
   // - Production: 75 (optimal for Gemini Batch API)
-  chunkSize: 10,
+  chunkSize: 75,
 
   // Maximum number of parallel batch jobs
   // - Testing: 3 (easier to monitor)
@@ -16,7 +16,8 @@ export const PIPELINE_CONFIG = {
   concurrentLimit: 5,
 
   // Polling interval for batch status (in milliseconds)
-  pollingInterval: 60000, // 60 seconds
+  // - Production: 30 seconds (balance between responsiveness and API limits)
+  pollingInterval: 30000, // 30 seconds
 
   // Image download timeout (in milliseconds)
   imageDownloadTimeout: 30000, // 30 seconds
