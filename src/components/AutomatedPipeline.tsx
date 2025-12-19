@@ -481,6 +481,28 @@ export default function AutomatedPipeline({
     };
   }, []);
 
+  // Download all images as ZIP
+  const downloadAllImages = useCallback(async () => {
+    try {
+      const dateFolder = new Date().toISOString().split("T")[0];
+      const downloadUrl = `/api/download-all-images?date=${dateFolder}`;
+
+      // Create a link and trigger download
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `rug-images-${dateFolder}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      logger.info("PIPELINE", "Started downloading all images as ZIP", {
+        dateFolder,
+      });
+    } catch (error) {
+      logger.error("PIPELINE", "Failed to download images", error as Error);
+    }
+  }, []);
+
   if (!pipeline || !progress) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
@@ -577,6 +599,14 @@ export default function AutomatedPipeline({
               className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
             >
               ⏹️ Stop
+            </button>
+          )}
+          {totalImagesExtracted > 0 && (
+            <button
+              onClick={downloadAllImages}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+            >
+              📦 Download All ({totalImagesExtracted})
             </button>
           )}
         </div>
