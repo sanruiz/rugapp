@@ -27,3 +27,7 @@ This is a Next.js application for rug prompt generation and AI image processing.
 - Implement proper error handling and loading states
 - Use Tailwind CSS for styling
 - Follow React best practices with hooks and components
+
+## Skills Available
+- **vercel-react-best-practices**: Apply Vercel's React and Next.js performance optimization guidelines
+- **web-design-guidelines**: Review UI code for accessibility and design best practices
