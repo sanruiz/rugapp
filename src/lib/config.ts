@@ -21,7 +21,7 @@ const PROD_CONFIG = {
   chunkSize: 75,
   concurrentLimit: 5,
   pollingInterval: 30000, // 30 seconds
-  imageDownloadTimeout: 30000,
+  imageDownloadTimeout: 45000, // 45 seconds - more buffer for slow image sources
   maxImageSize: 10 * 1024 * 1024,
 } as const;
 
