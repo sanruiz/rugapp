@@ -18,6 +18,8 @@ interface AutomatedPipelineProps {
   rugs: ProcessedRug[];
   chunkSize?: number;
   concurrentLimit?: number;
+  skipChunks?: number; // Number of chunks already completed (to skip)
+  retryOnlyChunks?: number[]; // Only process these specific chunks (1-based)
   onComplete?: (results: PipelineState) => void;
 }
 
@@ -25,6 +27,8 @@ export default function AutomatedPipeline({
   rugs,
   chunkSize = PIPELINE_CONFIG.chunkSize,
   concurrentLimit = PIPELINE_CONFIG.concurrentLimit,
+  skipChunks = 0,
+  retryOnlyChunks = [],
   onComplete,
 }: AutomatedPipelineProps) {
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
@@ -38,10 +42,51 @@ export default function AutomatedPipeline({
   useEffect(() => {
     if (rugs.length > 0) {
       const newPipeline = initializePipeline(rugs, chunkSize, concurrentLimit);
+
+      // If we have retryOnlyChunks, mark all others as completed
+      if (retryOnlyChunks.length > 0) {
+        logger.info(
+          "PIPELINE",
+          `Retry mode: Only processing chunks ${retryOnlyChunks.join(", ")}`,
+          { retryOnlyChunks },
+        );
+        // Mark all chunks as completed EXCEPT the ones we want to retry
+        let completedCount = 0;
+        for (let i = 0; i < newPipeline.chunks.length; i++) {
+          const chunkNumber = i + 1; // 1-based
+          if (!retryOnlyChunks.includes(chunkNumber)) {
+            newPipeline.chunks[i].status = "completed";
+            newPipeline.chunks[i].resultsDownloaded = true;
+            completedCount++;
+          }
+        }
+        newPipeline.completedCount = completedCount;
+      }
+      // If we have skipChunks (and no retryOnlyChunks), mark those as already completed
+      else if (skipChunks > 0) {
+        logger.info(
+          "PIPELINE",
+          `Skipping first ${skipChunks} chunks (already completed)`,
+          { skipChunks },
+        );
+        for (
+          let i = 0;
+          i < Math.min(skipChunks, newPipeline.chunks.length);
+          i++
+        ) {
+          newPipeline.chunks[i].status = "completed";
+          newPipeline.chunks[i].resultsDownloaded = true;
+        }
+        newPipeline.completedCount = Math.min(
+          skipChunks,
+          newPipeline.chunks.length,
+        );
+      }
+
       setPipeline(newPipeline);
       setProgress(calculateProgress(newPipeline));
     }
-  }, [rugs, chunkSize, concurrentLimit]);
+  }, [rugs, chunkSize, concurrentLimit, skipChunks, retryOnlyChunks]);
 
   // Update progress when pipeline changes
   useEffect(() => {
@@ -55,7 +100,7 @@ export default function AutomatedPipeline({
     async (
       chunkIndex: number,
       outputFile: string,
-      skuMapping?: Array<{ index: number; sku: string; key: string }>
+      skuMapping?: Array<{ index: number; sku: string; key: string }>,
     ) => {
       try {
         logger.info(
@@ -66,7 +111,7 @@ export default function AutomatedPipeline({
             outputFile,
             hasSkuMapping: !!skuMapping,
             skuMappingLength: skuMapping?.length,
-          }
+          },
         );
 
         // Debug: log first few SKU mappings
@@ -75,17 +120,17 @@ export default function AutomatedPipeline({
             `[downloadChunkResults] SKU mapping sample for chunk ${
               chunkIndex + 1
             }:`,
-            skuMapping.slice(0, 3)
+            skuMapping.slice(0, 3),
           );
         } else {
           console.log(
-            `[downloadChunkResults] NO SKU mapping for chunk ${chunkIndex + 1}`
+            `[downloadChunkResults] NO SKU mapping for chunk ${chunkIndex + 1}`,
           );
         }
 
         // Download the batch results
         const downloadResponse = await fetch(
-          `/api/download-results?fileName=${encodeURIComponent(outputFile)}`
+          `/api/download-results?fileName=${encodeURIComponent(outputFile)}`,
         );
         const downloadResult = await downloadResponse.json();
 
@@ -110,7 +155,7 @@ export default function AutomatedPipeline({
           logger.warn(
             "PIPELINE",
             `Failed to save to disk: ${saveResult.error}`,
-            { chunkIndex }
+            { chunkIndex },
           );
         } else {
           logger.info("PIPELINE", `Chunk ${chunkIndex + 1} saved to disk`, {
@@ -148,7 +193,7 @@ export default function AutomatedPipeline({
           "PIPELINE",
           `Failed to download results for chunk ${chunkIndex + 1}`,
           error as Error,
-          { chunkIndex }
+          { chunkIndex },
         );
 
         // Mark as completed but with download error
@@ -166,7 +211,7 @@ export default function AutomatedPipeline({
         });
       }
     },
-    []
+    [],
   );
 
   // Poll for batch status
@@ -175,7 +220,7 @@ export default function AutomatedPipeline({
       const pollInterval = setInterval(async () => {
         try {
           const response = await fetch(
-            `/api/batch-status?batchId=${encodeURIComponent(batchId)}`
+            `/api/batch-status?batchId=${encodeURIComponent(batchId)}`,
           );
           const result = await response.json();
 
@@ -205,7 +250,7 @@ export default function AutomatedPipeline({
                   `Chunk ${
                     chunkIndex + 1
                   } batch completed, downloading results...`,
-                  { chunkIndex, batchId }
+                  { chunkIndex, batchId },
                 );
 
                 // Download results in background
@@ -217,7 +262,7 @@ export default function AutomatedPipeline({
                     `[polling] Chunk ${chunkIndex + 1} - skuMapping in state:`,
                     chunkSkuMapping
                       ? `${chunkSkuMapping.length} entries`
-                      : "NONE"
+                      : "NONE",
                   );
                   downloadChunkResults(chunkIndex, outputFile, chunkSkuMapping);
                 } else {
@@ -233,7 +278,7 @@ export default function AutomatedPipeline({
                   ...prev,
                   chunks: newChunks,
                   currentlyProcessing: prev.currentlyProcessing.filter(
-                    (i) => i !== chunkIndex
+                    (i) => i !== chunkIndex,
                   ),
                   completedCount: prev.completedCount + 1,
                 };
@@ -257,14 +302,14 @@ export default function AutomatedPipeline({
                   "PIPELINE",
                   `Chunk ${chunkIndex + 1} batch failed`,
                   undefined,
-                  { chunkIndex, batchId, state }
+                  { chunkIndex, batchId, state },
                 );
 
                 return {
                   ...prev,
                   chunks: newChunks,
                   currentlyProcessing: prev.currentlyProcessing.filter(
-                    (i) => i !== chunkIndex
+                    (i) => i !== chunkIndex,
                   ),
                   failedCount: prev.failedCount + 1,
                 };
@@ -280,7 +325,7 @@ export default function AutomatedPipeline({
 
       pollingIntervalsRef.current.set(chunkIndex, pollInterval);
     },
-    [downloadChunkResults]
+    [downloadChunkResults],
   );
 
   // Process a single chunk
@@ -325,12 +370,12 @@ export default function AutomatedPipeline({
             `[processChunk] Chunk ${chunkIndex + 1} - SKU mapping received:`,
             result.data.skuMapping
               ? `${result.data.skuMapping.length} entries`
-              : "NONE"
+              : "NONE",
           );
           if (result.data.skuMapping?.length > 0) {
             console.log(
               `[processChunk] Sample:`,
-              result.data.skuMapping.slice(0, 3)
+              result.data.skuMapping.slice(0, 3),
             );
           }
 
@@ -363,7 +408,7 @@ export default function AutomatedPipeline({
           "PIPELINE",
           `Chunk ${chunkIndex + 1} failed`,
           error as Error,
-          { chunkIndex }
+          { chunkIndex },
         );
 
         setPipeline((prev) => {
@@ -379,14 +424,14 @@ export default function AutomatedPipeline({
             ...prev,
             chunks: newChunks,
             currentlyProcessing: prev.currentlyProcessing.filter(
-              (i) => i !== chunkIndex
+              (i) => i !== chunkIndex,
             ),
             failedCount: prev.failedCount + 1,
           };
         });
       }
     },
-    [startPollingForChunk]
+    [startPollingForChunk],
   );
 
   // Main pipeline loop
@@ -398,13 +443,13 @@ export default function AutomatedPipeline({
 
       if (nextChunks.length === 0) {
         const allDone = pipeline.chunks.every(
-          (c) => c.status === "completed" || c.status === "failed"
+          (c) => c.status === "completed" || c.status === "failed",
         );
 
         if (allDone) {
           setIsRunning(false);
           setPipeline((prev) =>
-            prev ? { ...prev, status: "completed", endTime: new Date() } : prev
+            prev ? { ...prev, status: "completed", endTime: new Date() } : prev,
           );
           logger.info("PIPELINE", "Pipeline completed!", {
             completed: pipeline.completedCount,
@@ -419,7 +464,7 @@ export default function AutomatedPipeline({
         nextChunks.map((idx) => {
           const chunk = pipeline.chunks[idx];
           return processChunk(idx, chunk.rugs);
-        })
+        }),
       );
     };
 
@@ -440,7 +485,7 @@ export default function AutomatedPipeline({
             status: "running",
             startTime: new Date(),
           }
-        : prev
+        : prev,
     );
 
     logger.info("PIPELINE", "Pipeline started", {
@@ -561,7 +606,7 @@ export default function AutomatedPipeline({
   const totalImagesExtracted =
     pipeline?.chunks.reduce(
       (sum, chunk) => sum + (chunk.imagesExtracted || 0),
-      0
+      0,
     ) || 0;
 
   return (
@@ -676,7 +721,7 @@ export default function AutomatedPipeline({
             <div
               key={index}
               className={`w-6 h-6 rounded flex items-center justify-center text-xs cursor-default ${getStatusColor(
-                chunk.status
+                chunk.status,
               )}`}
               title={`Chunk ${index + 1}: ${chunk.status}${
                 chunk.batchId ? ` (${chunk.batchId.slice(-8)})` : ""

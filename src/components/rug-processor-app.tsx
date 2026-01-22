@@ -1,12 +1,17 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from 'react-dropzone';
 import { ProcessedRug, ProcessingStatus, BatchJob } from '@/types/rug';
 import { logger } from "@/lib/logger";
 import LogViewer from "./LogViewer";
 import AutomatedPipeline from "./AutomatedPipeline";
 import { PIPELINE_CONFIG } from "@/lib/config";
+import {
+  getContinueState,
+  clearContinueState,
+  ContinueState,
+} from "./BatchRecovery";
 
 import { PipelineState } from '@/lib/batch-pipeline';
 
@@ -33,13 +38,47 @@ export default function RugProcessorApp() {
   const [chunkingMode, setChunkingMode] = useState(false);
   const [automatedMode, setAutomatedMode] = useState(false); // NEW: Automated pipeline mode
   const [chunks, setChunks] = useState<{ filename: string; size: number }[]>(
-    []
+    [],
   );
   const [chunkSize, setChunkSize] = useState<number>(PIPELINE_CONFIG.chunkSize);
   const [chunkedFile, setChunkedFile] = useState<File | null>(null);
 
   // Session management
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
+  // Continue state from recovery
+  const [continueState, setContinueState] = useState<ContinueState | null>(
+    null,
+  );
+  const [skipChunks, setSkipChunks] = useState<number>(0);
+  const [retryOnlyChunks, setRetryOnlyChunks] = useState<number[]>([]); // Specific chunks to retry
+
+  // Check for continue state on mount
+  useEffect(() => {
+    const state = getContinueState();
+    if (state) {
+      setContinueState(state);
+      setSkipChunks(state.startFromChunk - 1); // Convert to 0-based
+      setAutomatedMode(true);
+      console.log("[Recovery] Continue state found:", state);
+    }
+
+    // Check for retry chunks
+    if (typeof window !== "undefined") {
+      const retryChunksStr = localStorage.getItem("rugapp_retry_chunks");
+      if (retryChunksStr) {
+        const chunks = retryChunksStr
+          .split(",")
+          .map((s) => parseInt(s.trim()))
+          .filter((n) => !isNaN(n));
+        if (chunks.length > 0) {
+          setRetryOnlyChunks(chunks);
+          setAutomatedMode(true);
+          console.log("[Recovery] Retry chunks found:", chunks);
+        }
+      }
+    }
+  }, []);
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
@@ -220,7 +259,7 @@ export default function RugProcessorApp() {
     const pollInterval = setInterval(async () => {
       try {
         const response = await fetch(
-          `/api/batch-status?batchId=${encodeURIComponent(batchId)}`
+          `/api/batch-status?batchId=${encodeURIComponent(batchId)}`,
         );
         const result = await response.json();
 
@@ -228,7 +267,7 @@ export default function RugProcessorApp() {
           console.error(
             "Batch status API error:",
             response.status,
-            response.statusText
+            response.statusText,
           );
           setStatus((prev) => ({
             ...prev,
@@ -250,7 +289,7 @@ export default function RugProcessorApp() {
               "Batch state is undefined or invalid:",
               state,
               "Full result:",
-              result
+              result,
             );
             setStatus((prev) => ({
               ...prev,
@@ -332,8 +371,8 @@ export default function RugProcessorApp() {
     try {
       const response = await fetch(
         `/api/download-results?fileName=${encodeURIComponent(
-          batchJob.outputFile
-        )}`
+          batchJob.outputFile,
+        )}`,
       );
       const result = await response.json();
 
@@ -380,7 +419,7 @@ export default function RugProcessorApp() {
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to download results"
+        err instanceof Error ? err.message : "Failed to download results",
       );
     } finally {
       setProcessing(false);
@@ -454,7 +493,7 @@ export default function RugProcessorApp() {
         setProcessing(false);
       }
     },
-    [chunkSize]
+    [chunkSize],
   );
 
   const downloadChunk = async (chunkIndex: number) => {
@@ -496,7 +535,7 @@ export default function RugProcessorApp() {
       if (!file) return;
       await chunkCSV(file);
     },
-    [chunkCSV]
+    [chunkCSV],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -606,6 +645,8 @@ export default function RugProcessorApp() {
           rugs={processedRugs}
           chunkSize={chunkSize}
           concurrentLimit={PIPELINE_CONFIG.concurrentLimit}
+          skipChunks={skipChunks}
+          retryOnlyChunks={retryOnlyChunks}
           onComplete={(result: PipelineState) => {
             logger.info("PIPELINE", "Automated pipeline completed", {
               completed: result.completedCount,
@@ -618,36 +659,131 @@ export default function RugProcessorApp() {
               status: "complete",
               currentStep: `Pipeline completed: ${result.completedCount} chunks successful, ${result.failedCount} failed`,
             });
+            // Clear continue state when done
+            if (continueState) {
+              clearContinueState();
+              setContinueState(null);
+            }
+            // Clear retry chunks when done
+            if (retryOnlyChunks.length > 0) {
+              localStorage.removeItem("rugapp_retry_chunks");
+              setRetryOnlyChunks([]);
+            }
           }}
         />
       )}
 
       {/* Automated Mode Upload Prompt */}
       {automatedMode && processedRugs.length === 0 && (
-        <div className="bg-green-50 dark:bg-green-900/20 rounded-lg shadow-md p-6 border-2 border-green-300 dark:border-green-700">
-          <h2 className="text-2xl font-semibold mb-4 text-green-800 dark:text-green-300">
-            🚀 Automated Pipeline Ready
-          </h2>
-          <p className="text-green-700 dark:text-green-400 mb-4">
-            Upload your CSV file above to start the automated pipeline. The
-            system will:
-          </p>
-          <ol className="list-decimal list-inside space-y-2 text-green-700 dark:text-green-400">
-            <li>
-              Split your {">"}5000 rugs into chunks of {chunkSize} each
-            </li>
-            <li>Process 5 chunks in parallel</li>
-            <li>Download images and generate JSONL for each chunk</li>
-            <li>Submit to Gemini Batch API</li>
-            <li>Wait for results, then continue with next chunks</li>
-            <li>Repeat until all chunks are processed</li>
-          </ol>
-          <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
-            <p className="text-sm text-yellow-800 dark:text-yellow-300">
-              ⚠️ <strong>Note:</strong> This process may take several hours for
-              large datasets. You can pause/resume at any time.
-            </p>
-          </div>
+        <div
+          className={`rounded-lg shadow-md p-6 border-2 ${
+            retryOnlyChunks.length > 0
+              ? "bg-orange-50 dark:bg-orange-900/20 border-orange-300 dark:border-orange-700"
+              : continueState
+                ? "bg-purple-50 dark:bg-purple-900/20 border-purple-300 dark:border-purple-700"
+                : "bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700"
+          }`}
+        >
+          {retryOnlyChunks.length > 0 ? (
+            <>
+              <h2 className="text-2xl font-semibold mb-4 text-orange-800 dark:text-orange-300">
+                🔄 Retry Mode: Chunks {retryOnlyChunks.join(", ")}
+              </h2>
+              <p className="text-orange-700 dark:text-orange-400 mb-4">
+                Se reprocesarán solo los chunks fallidos. Para continuar:
+              </p>
+              <ol className="list-decimal list-inside space-y-2 text-orange-700 dark:text-orange-400">
+                <li>
+                  <strong>Sube el mismo CSV</strong> que usaste originalmente
+                </li>
+                <li>
+                  El sistema procesará SOLO los chunks:{" "}
+                  {retryOnlyChunks.join(", ")}
+                </li>
+                <li>
+                  Aproximadamente {retryOnlyChunks.length * chunkSize} rugs
+                  serán reprocesados
+                </li>
+              </ol>
+              <div className="mt-4 p-3 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-between">
+                <p className="text-sm text-orange-800 dark:text-orange-300">
+                  ⚠️ {retryOnlyChunks.length} chunks pendientes
+                </p>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("rugapp_retry_chunks");
+                    setRetryOnlyChunks([]);
+                  }}
+                  className="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </>
+          ) : continueState ? (
+            <>
+              <h2 className="text-2xl font-semibold mb-4 text-purple-800 dark:text-purple-300">
+                🔄 Continuando desde Chunk {continueState.startFromChunk}
+              </h2>
+              <p className="text-purple-700 dark:text-purple-400 mb-4">
+                Se detectó un procesamiento previo. Para continuar:
+              </p>
+              <ol className="list-decimal list-inside space-y-2 text-purple-700 dark:text-purple-400">
+                <li>
+                  <strong>Sube el mismo CSV</strong> que estabas procesando
+                </li>
+                <li>
+                  El sistema saltará los primeros{" "}
+                  {continueState.totalChunksCompleted} chunks
+                </li>
+                <li>
+                  Continuará desde el chunk {continueState.startFromChunk}
+                </li>
+              </ol>
+              <div className="mt-4 p-3 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-between">
+                <p className="text-sm text-purple-800 dark:text-purple-300">
+                  📁 Output: {continueState.outputDate} | ✅{" "}
+                  {continueState.totalChunksCompleted} chunks completados
+                </p>
+                <button
+                  onClick={() => {
+                    clearContinueState();
+                    setContinueState(null);
+                    setSkipChunks(0);
+                  }}
+                  className="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="text-2xl font-semibold mb-4 text-green-800 dark:text-green-300">
+                🚀 Automated Pipeline Ready
+              </h2>
+              <p className="text-green-700 dark:text-green-400 mb-4">
+                Upload your CSV file above to start the automated pipeline. The
+                system will:
+              </p>
+              <ol className="list-decimal list-inside space-y-2 text-green-700 dark:text-green-400">
+                <li>
+                  Split your {">"}5000 rugs into chunks of {chunkSize} each
+                </li>
+                <li>Process 5 chunks in parallel</li>
+                <li>Download images and generate JSONL for each chunk</li>
+                <li>Submit to Gemini Batch API</li>
+                <li>Wait for results, then continue with next chunks</li>
+                <li>Repeat until all chunks are processed</li>
+              </ol>
+              <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+                <p className="text-sm text-yellow-800 dark:text-yellow-300">
+                  ⚠️ <strong>Note:</strong> This process may take several hours
+                  for large datasets. You can pause/resume at any time.
+                </p>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -767,8 +903,8 @@ export default function RugProcessorApp() {
                       status.status === "complete"
                         ? "text-green-600"
                         : status.status === "error"
-                        ? "text-red-600"
-                        : "text-blue-600"
+                          ? "text-red-600"
+                          : "text-blue-600"
                     }`}
                   >
                     {status.currentStep}
@@ -964,10 +1100,10 @@ export default function RugProcessorApp() {
                         batchJob.state === "JOB_STATE_SUCCEEDED"
                           ? "text-green-600"
                           : batchJob.state === "JOB_STATE_FAILED"
-                          ? "text-red-600"
-                          : batchJob.state === "JOB_STATE_RUNNING"
-                          ? "text-blue-600"
-                          : "text-yellow-600"
+                            ? "text-red-600"
+                            : batchJob.state === "JOB_STATE_RUNNING"
+                              ? "text-blue-600"
+                              : "text-yellow-600"
                       }`}
                     >
                       {batchJob.state
@@ -1118,7 +1254,7 @@ export default function RugProcessorApp() {
                       setError(
                         err instanceof Error
                           ? err.message
-                          : "Failed to download"
+                          : "Failed to download",
                       );
                     } finally {
                       setProcessing(false);

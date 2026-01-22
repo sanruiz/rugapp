@@ -1,4 +1,5 @@
 import RugProcessorApp from "@/components/rug-processor-app";
+import BatchRecovery from "@/components/BatchRecovery";
 
 export default function Home() {
   return (
@@ -13,6 +14,11 @@ export default function Home() {
             for Gemini API
           </p>
         </header>
+
+        {/* Recovery panel - always visible at top */}
+        <div className="mb-8">
+          <BatchRecovery />
+        </div>
 
         <RugProcessorApp />
       </div>
