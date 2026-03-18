@@ -38,9 +38,9 @@ export class GeminiService {
 
       // Add the text prompt with integrated negative concepts and clear instructions
       parts.push({
-        text: `${rug.prompt} Ensure seamless integration and harmonious blending of the rug within the scene so it appears naturally part of the environment, not artificially placed or pasted on. Avoid low quality, overexposed, watermarks, extra rugs, distorted perspective, cartoon style, text, logos, blurry elements, or graininess.
+        text: `${rug.prompt} Ensure seamless integration and harmonious blending of the rug within the scene so it appears naturally part of the environment, not artificially placed or pasted on. IMPORTANT: The source rug image may contain text overlays like "Light Side" or other labels - these must NOT appear in the generated image. Remove any text, labels, or watermarks from the rug and show only the clean rug pattern. Avoid low quality, overexposed, watermarks, extra rugs, distorted perspective, cartoon style, text, logos, blurry elements, or graininess.
 
-Using the rug image provided above, generate a photorealistic interior scene image that matches these exact requirements. The generated image must show the EXACT rug from the provided image placed in the scene as described.`,
+Using the rug image provided above, generate a photorealistic interior scene image that matches these exact requirements. The generated image must show the EXACT rug pattern from the provided image placed in the scene as described, but without any text overlays or labels that may appear on the source image.`,
       });
 
       // Track if we successfully added an image

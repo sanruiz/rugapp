@@ -135,7 +135,7 @@ export function buildPrompt(rug: RugData): string {
 
   const parts = [
     // 1) Ambiente + estilo + uso
-    `Photo-realistic ${ambientePhrase} in ${decorPhrase}, featuring an ${usePhrase}, with natural daylight.`,
+    `Photo-realistic ${ambientePhrase} in ${decorPhrase}, featuring an ${usePhrase}, with soft diffused daylight.`,
     // 2) Posición de la alfombra (diferente para runners)
     placementInstruction,
     // 3) Colección / estilo / origen
@@ -152,7 +152,9 @@ export function buildPrompt(rug: RugData): string {
     }; dominant colors: ${colores}.`,
     // 5) Proportions preservation
     `Preserve the rug's real physical proportions exactly as shown in the product image. Maintain the correct length-to-width ratio with no distortion, stretching, compression, or reshaping. Render the rug in the scene at a realistic scale relative to the room and surrounding objects. Ensure the geometry, outline, and aspect ratio match the original product image precisely, keeping the true shape whether it is rectangular, round, square, or runner. Do not modify the proportions or crop any part of the rug. Retain the full original dimensions so the rug appears naturally sized and consistent with its actual measurements.`,
-    // 6) Extras de render
+    // 6) Lighting instructions - avoid harsh sunlight
+    `Use soft, even ambient lighting. Avoid direct sunlight streaming through windows, harsh sun rays, or strong light beams that create overexposed areas on the rug. The lighting should be diffused and balanced to clearly show the rug's colors, patterns, and textures without bright spots or washed-out areas.`,
+    // 7) Extras de render
     `Hardwood floor, soft shadows, realistic perspective from eye level (~1.2m), 35mm lens, high detail.`,
   ];
 
