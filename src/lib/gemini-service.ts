@@ -1,6 +1,11 @@
 import { google } from '@ai-sdk/google';
 import { BatchRequest, ProcessedRug } from '@/types/rug';
+import { ArtworkBatchRequest, ProcessedArtwork } from '@/types/artwork';
 import { downloadImageAsBase64 } from './rug-utils';
+import { 
+  downloadImageAsBase64 as downloadArtworkImage, 
+  getAspectRatioConfig,
+} from './artwork-utils';
 import { logger } from "./logger";
 
 // Track statistics for batch processing
@@ -251,5 +256,188 @@ Using the rug image provided above, generate a photorealistic interior scene ima
       console.error(`Error processing rug ${rug.sku}:`, error);
       return null;
     }
+  }
+
+  // ========= ARTWORK PROCESSING METHODS =========
+
+  /**
+   * Create a batch request for a single artwork
+   */
+  async createArtworkBatchRequest(
+    artwork: ProcessedArtwork,
+    index: number,
+    includeImage: boolean = true
+  ): Promise<{ request: ArtworkBatchRequest; hasImage: boolean } | null> {
+    try {
+      const parts: Array<{
+        text?: string;
+        inline_data?: { mime_type: string; data: string };
+      }> = [];
+
+      // Add the text prompt with negative concepts
+      parts.push({
+        text: `${artwork.prompt}
+
+Using the artwork image provided, generate a photorealistic photograph showing this exact artwork displayed on a gallery wall. The artwork must be reproduced exactly as provided - do not modify, reinterpret, or stylize the original artwork. The generated image should show the artwork mounted on a wall with professional gallery lighting.
+
+IMPORTANT: Reproduce the artwork EXACTLY as shown in the source image. Do not add, remove, or change any elements of the original artwork.`,
+      });
+
+      let hasImage = false;
+
+      if (includeImage && artwork.imageLink) {
+        logger.debug("ARTWORK_BATCH", `Downloading image for artwork ${artwork.sku}...`, {
+          sku: artwork.sku,
+          imageUrl: artwork.imageLink.substring(0, 60),
+        });
+
+        const imageBase64 = await downloadArtworkImage(artwork.imageLink);
+
+        if (imageBase64) {
+          parts.push({
+            inline_data: {
+              mime_type: "image/jpeg",
+              data: imageBase64,
+            },
+          });
+          hasImage = true;
+          logger.debug("ARTWORK_BATCH", `✓ Image added for artwork ${artwork.sku}`, {
+            sku: artwork.sku,
+          });
+        } else {
+          logger.warn(
+            "ARTWORK_BATCH",
+            `✗ Failed to download image for artwork ${artwork.sku || index}`,
+            {
+              sku: artwork.sku,
+              imageUrl: artwork.imageLink,
+            }
+          );
+        }
+      }
+
+      const artworkKey = artwork.sku ? `artwork-${artwork.sku}` : `artwork-idx-${index}`;
+      const aspectRatioConfig = getAspectRatioConfig(artwork.aspectRatio);
+
+      const batchRequest: ArtworkBatchRequest = {
+        key: artworkKey,
+        request: {
+          contents: [
+            {
+              parts: parts,
+            },
+          ],
+          generation_config: {
+            response_modalities: ["IMAGE"],
+            image_config: {
+              aspect_ratio: aspectRatioConfig,
+            },
+          },
+        },
+      };
+
+      return { request: batchRequest, hasImage };
+    } catch (error) {
+      logger.error(
+        "ARTWORK_BATCH",
+        `Error creating batch request for artwork ${artwork.sku || index}`,
+        error as Error,
+        { sku: artwork.sku }
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Create batch requests for multiple artworks
+   */
+  async createArtworkBatchRequests(
+    artworks: ProcessedArtwork[],
+    includeImages: boolean = true,
+    onProgress?: (processed: number, total: number) => void
+  ): Promise<ArtworkBatchRequest[]> {
+    const requests: ArtworkBatchRequest[] = [];
+    const total = artworks.length;
+
+    const stats = {
+      total,
+      withImages: 0,
+      withoutImages: 0,
+      imageDownloadFailed: 0,
+      skipped: 0,
+    };
+
+    logger.info("ARTWORK_BATCH", `Starting batch request creation for ${total} artworks`, {
+      total,
+      includeImages,
+    });
+
+    for (let i = 0; i < artworks.length; i++) {
+      const artwork = artworks[i];
+      const result = await this.createArtworkBatchRequest(artwork, i, includeImages);
+
+      if (result) {
+        requests.push(result.request);
+
+        if (includeImages) {
+          if (result.hasImage) {
+            stats.withImages++;
+          } else if (artwork.imageLink) {
+            stats.imageDownloadFailed++;
+          } else {
+            stats.withoutImages++;
+          }
+        }
+      } else {
+        stats.skipped++;
+        logger.warn(
+          "ARTWORK_BATCH",
+          `Skipped artwork ${artwork.sku} - failed to create request`,
+          { sku: artwork.sku }
+        );
+      }
+
+      if (onProgress) {
+        onProgress(i + 1, total);
+      }
+
+      if ((i + 1) % 25 === 0 || i === total - 1) {
+        logger.info("ARTWORK_BATCH", `Progress: ${i + 1}/${total} artworks processed`, {
+          processed: i + 1,
+          total,
+          withImages: stats.withImages,
+          failed: stats.imageDownloadFailed,
+        });
+      }
+    }
+
+    logger.info("ARTWORK_BATCH", `Artwork batch creation complete`, {
+      totalArtworks: stats.total,
+      requestsCreated: requests.length,
+      withImages: stats.withImages,
+      withoutImages: stats.withoutImages,
+      imageDownloadFailed: stats.imageDownloadFailed,
+      skipped: stats.skipped,
+      successRate: `${Math.round((requests.length / stats.total) * 100)}%`,
+    });
+
+    return requests;
+  }
+
+  /**
+   * Generate JSONL content for artwork batch API
+   */
+  generateArtworkJSONL(batchRequests: ArtworkBatchRequest[]): string {
+    return batchRequests
+      .map((request) => {
+        try {
+          return JSON.stringify(request);
+        } catch (error) {
+          console.error("Error stringifying artwork request:", error, request);
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .join("\n");
   }
 }

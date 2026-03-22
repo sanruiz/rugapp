@@ -1,7 +1,9 @@
 import csv from 'csv-parser';
 import { Readable } from 'stream';
 import { RugData, ProcessedRug } from '@/types/rug';
+import { ArtworkData, ProcessedArtwork } from '@/types/artwork';
 import { getDecorStyle, normalizeShape, getAmbienteFromShape, buildPrompt } from './rug-utils';
+import { normalizeAspectRatio, buildArtworkPrompt } from './artwork-utils';
 import { logger } from "./logger";
 
 interface CSVRow {
@@ -326,6 +328,176 @@ export function createChunkedCSVFiles(
         duration: Date.now() - startTime,
       }
     );
+    throw error;
+  }
+}
+
+// ========= ARTWORK CSV PROCESSING =========
+
+/**
+ * Detect if a CSV row is artwork data based on column presence
+ */
+export function isArtworkCSV(rows: CSVRow[]): boolean {
+  if (rows.length === 0) return false;
+  
+  const firstRow = rows[0];
+  const keys = Object.keys(firstRow).map(k => k.toLowerCase().trim());
+  
+  // Artwork CSV should have "aspect ratio" column and NOT have rug-specific columns
+  const hasAspectRatio = keys.some(k => 
+    k.includes("aspect") || k.includes("ratio") || k === "aspectratio"
+  );
+  
+  const hasRugColumns = keys.some(k => 
+    k.includes("pile") || k.includes("foundation") || k.includes("weavetype") || k.includes("rugtype")
+  );
+  
+  return hasAspectRatio && !hasRugColumns;
+}
+
+/**
+ * Map a CSV row to ArtworkData
+ */
+export function mapRowToArtworkData(row: CSVRow): ArtworkData {
+  // Handle BOM (Byte Order Mark) in SKU column
+  const sku = row["SKU"] || row["\ufeffSKU"] || "";
+  
+  // Find aspect ratio column (various naming conventions)
+  const aspectRatioRaw = 
+    row["Aspect Ratio"] || 
+    row["aspect ratio"] || 
+    row["AspectRatio"] || 
+    row["aspectRatio"] ||
+    row["aspect_ratio"] ||
+    row["Ratio"] ||
+    "1:1";
+  
+  const aspectRatio = normalizeAspectRatio(aspectRatioRaw);
+  
+  // Image link
+  const imageLink = row["image link"] || row["image_link"] || row["Image Link"] || row["ImageLink"] || "";
+  
+  // Title
+  const title = row["Title"] || row["title"] || row["Name"] || row["name"] || "";
+  
+  // Optional fields
+  const artist = row["Artist"] || row["artist"] || "";
+  const medium = row["Medium"] || row["medium"] || row["Material"] || "";
+  const dimensions = row["Dimensions"] || row["dimensions"] || row["Size"] || row["size"] || "";
+  const style = row["Style"] || row["style"] || "";
+  const category = row["Category"] || row["category"] || row["Primary Category"] || "";
+  const description = row["Description"] || row["description"] || "";
+  const year = row["Year"] || row["year"] || row["Date"] || "";
+  
+  return {
+    sku,
+    title,
+    artist,
+    medium,
+    dimensions,
+    aspectRatio,
+    imageLink,
+    style,
+    category,
+    description,
+    year,
+  };
+}
+
+/**
+ * Process artwork data from CSV rows
+ */
+export function processArtworksFromCSV(csvData: CSVRow[]): ProcessedArtwork[] {
+  const startTime = Date.now();
+  logger.info("ARTWORK_PROCESSING", "Starting artwork processing", {
+    totalArtworks: csvData.length,
+  });
+
+  try {
+    const processedArtworks = csvData.map((row, index) => {
+      try {
+        const artworkData = mapRowToArtworkData(row);
+        const prompt = buildArtworkPrompt(artworkData);
+
+        if (artworkData.sku) {
+          logger.debug("ARTWORK_PROCESSING", "Processed artwork", {
+            artworkSku: artworkData.sku,
+            index: index + 1,
+            totalArtworks: csvData.length,
+            aspectRatio: artworkData.aspectRatio,
+          });
+        }
+
+        return {
+          ...artworkData,
+          prompt,
+        };
+      } catch (error) {
+        logger.error(
+          "ARTWORK_PROCESSING",
+          `Failed to process artwork at index ${index}`,
+          error as Error,
+          {
+            rowData: row,
+            index,
+          }
+        );
+        throw error;
+      }
+    });
+
+    const duration = Date.now() - startTime;
+    logger.info("ARTWORK_PROCESSING", "Artwork processing completed", {
+      processedArtworks: processedArtworks.length,
+      duration,
+      avgTimePerArtwork:
+        processedArtworks.length > 0 ? duration / processedArtworks.length : 0,
+    });
+
+    return processedArtworks;
+  } catch (error) {
+    logger.error("ARTWORK_PROCESSING", "Artwork processing failed", error as Error, {
+      duration: Date.now() - startTime,
+      totalArtworks: csvData.length,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Process artwork CSV data and split into chunks
+ */
+export function processArtworksInChunks(
+  csvData: CSVRow[],
+  chunkSize: number = 75
+): ProcessedArtwork[][] {
+  const startTime = Date.now();
+  logger.info("ARTWORK_CHUNKING", "Starting artwork chunking process", {
+    totalArtworks: csvData.length,
+    chunkSize,
+    expectedChunks: Math.ceil(csvData.length / chunkSize),
+  });
+
+  try {
+    const allProcessedArtworks = processArtworksFromCSV(csvData);
+    const chunks = chunkArray(allProcessedArtworks, chunkSize);
+
+    const duration = Date.now() - startTime;
+    logger.info("ARTWORK_CHUNKING", "Artwork chunking completed", {
+      totalArtworks: csvData.length,
+      chunkSize,
+      chunksCreated: chunks.length,
+      duration,
+      avgArtworksPerChunk: chunks.length > 0 ? csvData.length / chunks.length : 0,
+    });
+
+    return chunks;
+  } catch (error) {
+    logger.error("ARTWORK_CHUNKING", "Artwork chunking failed", error as Error, {
+      totalArtworks: csvData.length,
+      chunkSize,
+      duration: Date.now() - startTime,
+    });
     throw error;
   }
 }
