@@ -113,8 +113,30 @@ The system generates images that look like professional gallery photographs:
 | Column | Description | Example |
 |--------|-------------|---------|
 | `SKU` | Unique product identifier | `ART-12345` |
-| `image link` | URL to artwork image | `https://cdn.example.com/painting.jpg` |
+| `image link` OR `local path` | URL or local file path | See below |
 | `Aspect Ratio` | Output aspect ratio | `1:1`, `1:2`, or `2:1` |
+
+### Image Source Options
+
+You can provide images in **two ways**:
+
+#### Option 1: Remote URLs
+```csv
+SKU,Title,Aspect Ratio,image link
+ART-001,Starry Night,2:1,https://example.com/starry.jpg
+```
+
+#### Option 2: Local File Paths
+```csv
+SKU,Title,Aspect Ratio,local path
+ART-001,Starry Night,2:1,/Users/you/images/starry.jpg
+ART-002,Mona Lisa,1:2,./artwork/mona-lisa.png
+```
+
+**Supported local path column names:**
+- `local path`, `local_path`, `Local Path`, `LocalPath`
+- `file path`, `file_path`, `File Path`, `FilePath`
+- `path`, `Path`
 
 ### Recommended Columns
 
@@ -129,7 +151,7 @@ The system generates images that look like professional gallery photographs:
 | `Category` | Art category | `Landscape`, `Portrait` |
 | `Description` | Artwork description | `Night sky over village...` |
 
-### Sample CSV
+### Sample CSV (with URLs)
 
 ```csv
 SKU,Title,Artist,Medium,Aspect Ratio,image link,Style
@@ -137,6 +159,15 @@ ART-001,Starry Night,Vincent van Gogh,Oil on canvas,2:1,https://example.com/star
 ART-002,The Persistence of Memory,Salvador Dali,Oil on canvas,2:1,https://example.com/dali.jpg,Surrealist
 ART-003,Girl with Pearl Earring,Johannes Vermeer,Oil on canvas,1:2,https://example.com/vermeer.jpg,Classical
 ART-004,Composition VIII,Wassily Kandinsky,Oil on canvas,1:1,https://example.com/kandinsky.jpg,Abstract
+```
+
+### Sample CSV (with Local Paths)
+
+```csv
+SKU,Title,Artist,Aspect Ratio,local path,Style
+ART-001,Starry Night,Vincent van Gogh,2:1,/images/artwork/starry-night.jpg,Impressionist
+ART-002,The Persistence of Memory,Salvador Dali,2:1,./paintings/dali-memory.png,Surrealist
+ART-003,Girl with Pearl Earring,Johannes Vermeer,1:2,../gallery/vermeer.jpg,Classical
 ```
 
 ---

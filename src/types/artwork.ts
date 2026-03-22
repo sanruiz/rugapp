@@ -9,6 +9,8 @@ export interface ArtworkData {
   dimensions?: string;
   aspectRatio: AspectRatio;
   imageLink: string;
+  /** Local file path (alternative to imageLink) */
+  localImagePath?: string;
   style?: string;
   category?: string;
   description?: string;

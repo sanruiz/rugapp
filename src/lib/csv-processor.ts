@@ -361,34 +361,57 @@ export function isArtworkCSV(rows: CSVRow[]): boolean {
 export function mapRowToArtworkData(row: CSVRow): ArtworkData {
   // Handle BOM (Byte Order Mark) in SKU column
   const sku = row["SKU"] || row["\ufeffSKU"] || "";
-  
+
   // Find aspect ratio column (various naming conventions)
-  const aspectRatioRaw = 
-    row["Aspect Ratio"] || 
-    row["aspect ratio"] || 
-    row["AspectRatio"] || 
+  const aspectRatioRaw =
+    row["Aspect Ratio"] ||
+    row["aspect ratio"] ||
+    row["AspectRatio"] ||
     row["aspectRatio"] ||
     row["aspect_ratio"] ||
     row["Ratio"] ||
     "1:1";
-  
+
   const aspectRatio = normalizeAspectRatio(aspectRatioRaw);
-  
-  // Image link
-  const imageLink = row["image link"] || row["image_link"] || row["Image Link"] || row["ImageLink"] || "";
-  
+
+  // Image link (URL)
+  const imageLink =
+    row["image link"] ||
+    row["image_link"] ||
+    row["Image Link"] ||
+    row["ImageLink"] ||
+    row["URL"] ||
+    "";
+
+  // Local image path (for local files)
+  const localImagePath =
+    row["local path"] ||
+    row["local_path"] ||
+    row["Local Path"] ||
+    row["LocalPath"] ||
+    row["file path"] ||
+    row["file_path"] ||
+    row["File Path"] ||
+    row["FilePath"] ||
+    row["path"] ||
+    row["Path"] ||
+    "";
+
   // Title
-  const title = row["Title"] || row["title"] || row["Name"] || row["name"] || "";
-  
+  const title =
+    row["Title"] || row["title"] || row["Name"] || row["name"] || "";
+
   // Optional fields
   const artist = row["Artist"] || row["artist"] || "";
   const medium = row["Medium"] || row["medium"] || row["Material"] || "";
-  const dimensions = row["Dimensions"] || row["dimensions"] || row["Size"] || row["size"] || "";
+  const dimensions =
+    row["Dimensions"] || row["dimensions"] || row["Size"] || row["size"] || "";
   const style = row["Style"] || row["style"] || "";
-  const category = row["Category"] || row["category"] || row["Primary Category"] || "";
+  const category =
+    row["Category"] || row["category"] || row["Primary Category"] || "";
   const description = row["Description"] || row["description"] || "";
   const year = row["Year"] || row["year"] || row["Date"] || "";
-  
+
   return {
     sku,
     title,
@@ -397,6 +420,7 @@ export function mapRowToArtworkData(row: CSVRow): ArtworkData {
     dimensions,
     aspectRatio,
     imageLink,
+    localImagePath: localImagePath || undefined,
     style,
     category,
     description,

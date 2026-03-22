@@ -217,3 +217,121 @@ export async function downloadImageAsBase64(
     return null;
   }
 }
+
+/**
+ * Read a local image file and convert to base64
+ */
+export async function readLocalImageAsBase64(
+  filePath: string
+): Promise<string | null> {
+  if (!filePath) {
+    logger.warn("ARTWORK_IMAGE", "No file path provided");
+    return null;
+  }
+
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    
+    // Resolve the path (handle relative paths)
+    const resolvedPath = path.resolve(filePath);
+    
+    logger.debug("ARTWORK_IMAGE", `Reading local image...`, {
+      path: resolvedPath,
+    });
+
+    // Check if file exists
+    try {
+      await fs.access(resolvedPath);
+    } catch {
+      logger.error("ARTWORK_IMAGE", `File not found: ${resolvedPath}`, undefined, {
+        path: resolvedPath,
+      });
+      return null;
+    }
+
+    // Read the file
+    const buffer = await fs.readFile(resolvedPath);
+
+    if (buffer.byteLength === 0) {
+      logger.error("ARTWORK_IMAGE", "Image file is empty (0 bytes)", undefined, {
+        path: resolvedPath,
+      });
+      return null;
+    }
+
+    const base64 = buffer.toString("base64");
+
+    if (!base64 || base64.length < 100) {
+      logger.error(
+        "ARTWORK_IMAGE",
+        "Base64 conversion failed or too small",
+        undefined,
+        {
+          path: resolvedPath,
+          base64Length: base64?.length || 0,
+        }
+      );
+      return null;
+    }
+
+    logger.debug("ARTWORK_IMAGE", `Local image read successfully`, {
+      path: resolvedPath,
+      sizeKB: Math.round(buffer.byteLength / 1024),
+      base64Length: base64.length,
+    });
+
+    return base64;
+  } catch (error) {
+    logger.error(
+      "ARTWORK_IMAGE",
+      `Error reading local image: ${(error as Error).message}`,
+      error as Error,
+      {
+        path: filePath,
+      }
+    );
+    return null;
+  }
+}
+
+/**
+ * Get image as base64 from either URL or local path
+ */
+export async function getImageAsBase64(
+  imageLink?: string,
+  localPath?: string
+): Promise<string | null> {
+  // Prefer local path if provided
+  if (localPath) {
+    return readLocalImageAsBase64(localPath);
+  }
+  
+  // Fall back to URL download
+  if (imageLink) {
+    return downloadImageAsBase64(imageLink);
+  }
+  
+  logger.warn("ARTWORK_IMAGE", "No image source provided (neither URL nor local path)");
+  return null;
+}
+
+/**
+ * Detect mime type from file path or URL
+ */
+export function detectMimeType(imagePath: string): string {
+  const ext = imagePath.toLowerCase().split(".").pop();
+  
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "jpg":
+    case "jpeg":
+    default:
+      return "image/jpeg";
+  }
+}

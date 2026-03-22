@@ -2,10 +2,11 @@ import { google } from '@ai-sdk/google';
 import { BatchRequest, ProcessedRug } from '@/types/rug';
 import { ArtworkBatchRequest, ProcessedArtwork } from '@/types/artwork';
 import { downloadImageAsBase64 } from './rug-utils';
-import { 
-  downloadImageAsBase64 as downloadArtworkImage, 
+import {
+  getImageAsBase64,
   getAspectRatioConfig,
-} from './artwork-utils';
+  detectMimeType,
+} from "./artwork-utils";
 import { logger } from "./logger";
 
 // Track statistics for batch processing
@@ -285,33 +286,49 @@ IMPORTANT: Reproduce the artwork EXACTLY as shown in the source image. Do not ad
 
       let hasImage = false;
 
-      if (includeImage && artwork.imageLink) {
-        logger.debug("ARTWORK_BATCH", `Downloading image for artwork ${artwork.sku}...`, {
-          sku: artwork.sku,
-          imageUrl: artwork.imageLink.substring(0, 60),
-        });
+      if (includeImage && (artwork.imageLink || artwork.localImagePath)) {
+        const imageSource = artwork.localImagePath || artwork.imageLink;
+        logger.debug(
+          "ARTWORK_BATCH",
+          `Loading image for artwork ${artwork.sku}...`,
+          {
+            sku: artwork.sku,
+            source: artwork.localImagePath ? "local" : "url",
+            path: imageSource?.substring(0, 60),
+          },
+        );
 
-        const imageBase64 = await downloadArtworkImage(artwork.imageLink);
+        const imageBase64 = await getImageAsBase64(
+          artwork.imageLink,
+          artwork.localImagePath,
+        );
 
         if (imageBase64) {
+          const mimeType = detectMimeType(imageSource || "image.jpg");
           parts.push({
             inline_data: {
-              mime_type: "image/jpeg",
+              mime_type: mimeType,
               data: imageBase64,
             },
           });
           hasImage = true;
-          logger.debug("ARTWORK_BATCH", `✓ Image added for artwork ${artwork.sku}`, {
-            sku: artwork.sku,
-          });
+          logger.debug(
+            "ARTWORK_BATCH",
+            `✓ Image added for artwork ${artwork.sku}`,
+            {
+              sku: artwork.sku,
+              source: artwork.localImagePath ? "local" : "url",
+            },
+          );
         } else {
           logger.warn(
             "ARTWORK_BATCH",
-            `✗ Failed to download image for artwork ${artwork.sku || index}`,
+            `✗ Failed to load image for artwork ${artwork.sku || index}`,
             {
               sku: artwork.sku,
               imageUrl: artwork.imageLink,
-            }
+              localPath: artwork.localImagePath,
+            },
           );
         }
       }
